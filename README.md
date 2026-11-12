@@ -6,10 +6,11 @@ offline: speech is recognised on your device and never uploaded.
 - Hold the mic, talk, let go: the text appears where the cursor is.
 - Removes filler words ("um", "you know", "basically", "thik hai na"…) and repeated phrases.
 - Spoken punctuation: "comma", "full stop", "question mark", "new line", "new paragraph".
-- English, and Hindi + English (Hinglish) written in Roman letters, each with a fast model and an optional accurate one
-  (the accurate Hinglish model is 874 MB and best on phones with 8 GB+ memory).
-- A personal dictionary for words it gets wrong (`journals = genres`), and a "words I use often" list that helps
-  Whisper spell names and jargon your way.
+- English on NVIDIA Parakeet TDT, which punctuates and capitalizes by itself (110M model by default, 0.6B for the best
+  accuracy), and Hindi + English (Hinglish) written in Roman letters on Whisper (the accurate Hinglish model is 874 MB
+  and best on phones with 8 GB+ memory).
+- A personal dictionary for words it gets wrong (`journals = genres`), and a "words I use often" list that fixes near
+  misses of names and jargon ("Kubirnets" → "Kubernetes").
 
 | Platform | Status |
 |---|---|
@@ -26,7 +27,7 @@ The full plan is in [docs/PLAN.md](docs/PLAN.md).
 1. Download `ThumbFree-x.y.z.apk` from [Releases](https://github.com/shivam098/thumbfree/releases) and open it. Android
    asks you to allow installs from your browser or file manager the first time.
 2. Open **ThumbFree** and follow the three steps: allow the microphone, turn on the ThumbFree keyboard, switch to it.
-3. Pick a language. The speech model downloads once (78 MB for English) and then works offline.
+3. Pick a language. The speech model downloads once (137 MB for English) and then works offline.
 
 Requires Android 8.0 or newer on a 64-bit phone.
 
@@ -55,5 +56,8 @@ cd thumbfree/android && ./gradlew :app:assembleDebug
 
 ## Credits
 
-Speech recognition by [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) running OpenAI's Whisper models.
-The Hinglish model is a quantized conversion of Oriserve's Whisper Hindi-to-Hinglish model.
+English recognition: NVIDIA Parakeet TDT models ([110M](https://huggingface.co/nvidia/parakeet-tdt_ctc-110m),
+[0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2); CC BY 4.0) running on
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) and ONNX Runtime (MIT).
+Hindi + English: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) running quantized conversions of
+Oriserve's Whisper Hindi-to-Hinglish models (Apache-2.0).

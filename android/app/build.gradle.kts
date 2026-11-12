@@ -1,3 +1,5 @@
+import java.net.URI
+import java.security.MessageDigest
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -15,7 +17,7 @@ val sherpaVersion = "2.0.1"
 val sherpaSha256 = "07e042d97f3a6bd5b7fe74d4eef0513dc01a714b16c15a903250095aba43a575"
 val sherpaAar = file("libs/sherpa-onnx-static-link-onnxruntime-$sherpaVersion.aar")
 
-fun sha256(f: File): String = java.security.MessageDigest.getInstance("SHA-256").let { md ->
+fun sha256(f: File): String = MessageDigest.getInstance("SHA-256").let { md ->
     f.inputStream().use { input ->
         val buffer = ByteArray(1 shl 20)
         while (true) {
@@ -32,7 +34,7 @@ if (!sherpaAar.isFile || sha256(sherpaAar) != sherpaSha256) {
     logger.lifecycle("Downloading $url")
     sherpaAar.parentFile.mkdirs()
     val part = File(sherpaAar.path + ".part")
-    java.net.URI(url).toURL().openStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+    URI(url).toURL().openStream().use { input -> part.outputStream().use { out -> input.copyTo(out) } }
     val actual = sha256(part)
     check(actual == sherpaSha256) { "${sherpaAar.name}: expected SHA-256 $sherpaSha256, got $actual" }
     part.renameTo(sherpaAar) || error("Couldn't save ${sherpaAar.name}")
