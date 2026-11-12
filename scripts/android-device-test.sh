@@ -21,6 +21,7 @@ if [ -n "$model" ]; then
 fi
 
 # am instrument exits 0 even when tests fail, so check the summary line.
-out=$(adb shell am instrument -w -r app.thumbfree.android.test/androidx.test.runner.AndroidJUnitRunner | tee /dev/stderr)
+adb shell am instrument -w -r app.thumbfree.android.test/androidx.test.runner.AndroidJUnitRunner > instrument.txt
+cat instrument.txt
 adb logcat -d -s System.out:I ThumbFree:* | grep -i thumbfree || true
-echo "$out" | grep -q "^OK (" || { echo "On-device tests failed"; exit 1; }
+grep -q "^OK (" instrument.txt || { echo "On-device tests failed"; exit 1; }
