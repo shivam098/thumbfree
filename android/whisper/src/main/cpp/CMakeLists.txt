@@ -10,10 +10,11 @@ if (NOT EXISTS "${WHISPER_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR "whisper.cpp is missing at ${WHISPER_ROOT}: run `git submodule update --init`")
 endif()
 
-# Recognition has to be fast in debug builds too.
+# Recognition has to be fast in every build type (AGP builds release variants as RelWithDebInfo).
 foreach (lang C CXX)
-    set(CMAKE_${lang}_FLAGS_DEBUG "-O3 -DNDEBUG")
-    set(CMAKE_${lang}_FLAGS_RELEASE "-O3 -DNDEBUG")
+    foreach (type DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+        set(CMAKE_${lang}_FLAGS_${type} "-O3 -DNDEBUG")
+    endforeach()
 endforeach()
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)

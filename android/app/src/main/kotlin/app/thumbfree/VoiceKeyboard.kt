@@ -154,11 +154,13 @@ class VoiceKeyboard : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         cancel(silent = true)
+        dropPending()
         super.onFinishInputView(finishingInput)
     }
 
     override fun onDestroy() {
         cancel(silent = true)
+        dropPending()
         main.removeCallbacksAndMessages(null)
         app.engine.unload()
         super.onDestroy()
@@ -333,6 +335,15 @@ class VoiceKeyboard : InputMethodService() {
             haptic()
             show("Cancelled", Tone.Muted)
         }
+        scheduleUnload()
+    }
+
+    /** The text box went away while the final pass was running: never type the result somewhere else. */
+    private fun dropPending() {
+        if (state != State.Finishing) return
+        session++
+        app.engine.abort()
+        setState(State.Idle)
         scheduleUnload()
     }
 
