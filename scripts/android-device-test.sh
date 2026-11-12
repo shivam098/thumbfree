@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Installs the debug app and its test APK on a connected device or emulator, copies a speech model to it and runs the
-# on-device tests. Usage: scripts/android-device-test.sh <apk-dir> [model-file]
+# Installs the debug app and its test APK on a connected device or emulator, copies speech models to it and runs the
+# on-device tests. Usage: scripts/android-device-test.sh <apk-dir> [models-dir]
+#   models-dir may hold ggml-base.en-q8_0.bin (Whisper tests) and parakeet-tdt-110m/ (Parakeet tests).
 set -euo pipefail
 
 apks="$1"
-model="${2:-}"
+models="${2:-}"
 
 app=$(find "$apks" -path '*debug*' -name '*-debug.apk' ! -name '*androidTest*' | head -n1)
 tests=$(find "$apks" -name '*-debug-androidTest.apk' | head -n1)
@@ -15,9 +16,9 @@ adb wait-for-device
 adb install -r -g "$app"
 adb install -r "$tests"
 
-if [ -n "$model" ]; then
+if [ -n "$models" ]; then
   adb shell mkdir -p /data/local/tmp/thumbfree
-  adb push "$model" /data/local/tmp/thumbfree/ggml-base.en-q8_0.bin
+  adb push "$models/." /data/local/tmp/thumbfree/
 fi
 
 # am instrument exits 0 even when tests fail, so check the summary line.

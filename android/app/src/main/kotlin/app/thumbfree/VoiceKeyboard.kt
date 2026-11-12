@@ -23,6 +23,7 @@ import app.thumbfree.core.FieldInfo
 import app.thumbfree.core.Insertion
 import app.thumbfree.core.Language
 import app.thumbfree.core.LivePreview
+import app.thumbfree.core.ModelSpec
 import app.thumbfree.core.Vocabulary
 import java.io.File
 
@@ -45,7 +46,7 @@ class VoiceKeyboard : InputMethodService() {
 
     private var recorder: Recorder? = null
     private var preview: LivePreview? = null
-    private var sessionModel: File? = null
+    private var sessionModel: ModelSpec? = null
     private var sessionVocabulary: List<String> = emptyList()
     @Volatile private var previewAllowed = false
     private var previewBusy = false
@@ -244,19 +245,18 @@ class VoiceKeyboard : InputMethodService() {
         recorder = rec
         previewBusy = false
         previewAllowed = prefs.livePreview && spec.livePreview
-        val vocabulary = if (spec.usesVocabulary) Vocabulary.parse(prefs.vocabulary) else emptyList()
+        val vocabulary = Vocabulary.parse(prefs.vocabulary)
         sessionVocabulary = vocabulary
         main.removeCallbacks(unload)
         mic.recording = true
         haptic()
         show(if (prefs.livePreview && !spec.livePreview) "Listening… (no live preview with this model)" else "Listening…", Tone.Active)
 
-        val file = app.models.file(spec)
-        sessionModel = file
+        sessionModel = spec
         val s = session
         app.engine.run {
             try {
-                app.engine.model(file).resume()
+                app.engine.model(spec).resume()
             } catch (e: Exception) {
                 main.post {
                     if (s == session) {
@@ -266,7 +266,9 @@ class VoiceKeyboard : InputMethodService() {
                 }
             }
         }
-        preview = LivePreview({ audio -> if (!previewAllowed) null else app.engine.loaded()?.let { app.engine.preview(it, audio, vocabulary) } })
+        preview = LivePreview({ audio ->
+            if (!previewAllowed) null else app.engine.loaded()?.let { app.engine.preview(it, audio, vocabulary, spec.promptVocabulary) }
+        })
         main.postDelayed(previewTick, PREVIEW_MS)
         return true
     }
@@ -310,14 +312,14 @@ class VoiceKeyboard : InputMethodService() {
         app.engine.abort() // stop a preview in progress; the final pass resumes the model
         show("Writing…", Tone.Active)
 
-        val file = sessionModel ?: return
+        val spec = sessionModel ?: return
         val vocabulary = sessionVocabulary
         val s = session
         app.engine.run {
             val text = try {
-                val model = app.engine.model(file)
+                val model = app.engine.model(spec)
                 model.resume()
-                app.engine.transcribe(model, audio, vocabulary)
+                app.engine.transcribe(model, audio, vocabulary, spec.promptVocabulary, spec.maxPieceSamples)
             } catch (e: Exception) {
                 null
             }

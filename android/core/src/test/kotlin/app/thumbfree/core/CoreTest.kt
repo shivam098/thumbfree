@@ -139,8 +139,29 @@ class CoreTest {
         assertEquals(ModelCatalog.Hinglish, ModelCatalog.forLanguage(Language.Hinglish, accurate = false))
         assertEquals(ModelCatalog.HinglishAccurate, ModelCatalog.forLanguage(Language.Hinglish, accurate = true))
         assertEquals(ModelCatalog.EnglishAccurate, ModelCatalog.forLanguage(Language.English, accurate = true))
-        assertFalse(ModelCatalog.Hinglish.usesVocabulary)
+        assertFalse(ModelCatalog.Hinglish.promptVocabulary)
+        assertTrue(ModelCatalog.HinglishAccurate.promptVocabulary)
         assertFalse(ModelCatalog.HinglishAccurate.livePreview)
+        assertEquals(Engine.Parakeet, ModelCatalog.EnglishFast.engine)
+        assertEquals(136_490_421L, ModelCatalog.EnglishFast.bytes)
+        assertEquals(SpeechAudio.SAMPLE_RATE * 30, ModelCatalog.EnglishFast.maxPieceSamples)
+        assertEquals("parakeet-tdt-110m/tokens.txt", ModelCatalog.EnglishFast.file("tokens.txt").path)
+        assertEquals(ModelCatalog.all.sumOf { it.files.size }, ModelCatalog.knownPaths.size)
+    }
+
+    @Test
+    fun word_list_fixes_near_misses_but_not_ordinary_words() {
+        val words = listOf("Kubernetes", "GitHub Copilot", "genres", "vibe coding")
+        assertEquals("Review the Kubernetes config.", Vocabulary.correct("Review the Kubirnets config.", words))
+        assertEquals("Ask GitHub Copilot to review it", Vocabulary.correct("Ask GitHub co-pilot to review it", words))
+        assertEquals("ask GitHub Copilot now", Vocabulary.correct("ask git hub copilot now", words))
+        assertEquals("I love vibe coding.", Vocabulary.correct("I love Vibe Coding.", words))
+        assertEquals("Pick a genre or two genes", Vocabulary.correct("Pick a genre or two genes", words))
+        assertEquals("Review the Cabernets config", Vocabulary.correct("Review the Cabernets config", words))
+        assertEquals("nothing to do here", Vocabulary.correct("nothing to do here", words))
+        assertEquals("Kubernetes, Kubernetes!", Vocabulary.correct("Kubernets, kubernetes!", words))
+        val formatter = DictationFormatter()
+        assertEquals("Genres matter.", formatter.format(Vocabulary.correct("Genres matter.", words)))
     }
 
     @Test

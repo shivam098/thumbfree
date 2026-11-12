@@ -91,7 +91,7 @@ class SetupActivity : Activity() {
         column.addView(languages)
         languageNote = text("", 13f, muted = true).spaced(6, 4)
         column.addView(languageNote)
-        column.addView(switch("Accurate English", "Bigger model: fewer mistakes, a bit slower (264 MB)", prefs.accurateEnglish) {
+        column.addView(switch("Accurate English", "Bigger model: fewer mistakes, slower, no live preview (661 MB)", prefs.accurateEnglish) {
             prefs.accurateEnglish = it
             refresh()
         })
@@ -114,8 +114,9 @@ class SetupActivity : Activity() {
         column.addView(heading("Words I use often"))
         column.addView(
             text(
-                "Names and jargon, one per line, so they're spelled your way (for example: GitHub Copilot, genres). " +
-                    "Used with English and accurate Hindi + English.",
+                "Names and jargon, one per line, so they're spelled your way (for example: GitHub Copilot, Kubernetes). " +
+                    "Near misses are fixed after recognition (“Kubirnets” → “Kubernetes”); accurate Hindi + English also " +
+                    "gets them as a hint. For words it mishears completely, use the personal dictionary below.",
                 13f, muted = true,
             ).spaced(0, 6),
         )
@@ -165,7 +166,8 @@ class SetupActivity : Activity() {
         val version = packageManager.getPackageInfo(packageName, 0).versionName
         column.addView(
             text(
-                "Version $version · speech engine: whisper.cpp ($engine)\n" +
+                "Version $version · speech engines: NVIDIA Parakeet via sherpa-onnx (English), " +
+                    "Whisper via whisper.cpp ($engine, Hindi + English)\n" +
                     "Audio is kept in memory only while you dictate and is never saved or sent anywhere. " +
                     "The internet is used only to download the speech models.",
                 13f, muted = true,
@@ -222,9 +224,9 @@ class SetupActivity : Activity() {
         val gb = (memory.totalMem + 500_000_000) / 1_000_000_000
         val metered = getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
         val message = buildString {
-            append("This model is ${mb(spec.bytes)}. It is the most accurate, but it needs about 1.3 GB of free memory ")
-            append("and takes several seconds per sentence.\n\nThis phone has $gb GB of memory.")
-            if (gb < 8) append(" That may not be enough: Android can close the keyboard while it works.")
+            append("This model is ${mb(spec.bytes)}. It is the most accurate, but it needs about ")
+            append("${mb(spec.bytes * 3 / 2)} of free memory and is slower.\n\nThis phone has $gb GB of memory.")
+            if (gb < spec.recommendedMemoryGb) append(" That may not be enough: Android can close the keyboard while it works.")
             if (metered) append("\n\nYou're on mobile data. Wi-Fi is recommended.")
         }
         AlertDialog.Builder(this)

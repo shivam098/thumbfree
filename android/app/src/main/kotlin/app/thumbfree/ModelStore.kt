@@ -3,6 +3,8 @@ package app.thumbfree
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import app.thumbfree.core.ModelCatalog
+import app.thumbfree.core.ModelFile
 import app.thumbfree.core.ModelSpec
 import java.io.File
 import java.io.FileOutputStream
@@ -15,8 +17,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 /**
- * Speech models in the app's private storage. Downloads resume after a dropped connection and are checked against the
- * pinned SHA-256 before use; a mismatch deletes the file.
+ * Speech models in the app's private storage. A model is one or more files; each download resumes after a dropped
+ * connection and is checked against its pinned SHA-256 before use (a mismatch deletes it).
  */
 class ModelStore(context: Context) {
     data class Progress(val done: Long, val total: Long, val running: Boolean, val error: String? = null)
@@ -27,9 +29,18 @@ class ModelStore(context: Context) {
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
 
-    fun file(spec: ModelSpec) = File(dir, spec.file)
+    init {
+        thread(name = "models-cleanup") { removeLeftovers() }
+    }
 
-    fun isInstalled(spec: ModelSpec) = file(spec).let { it.isFile && it.length() == spec.bytes }
+    fun file(model: ModelFile) = File(dir, model.path)
+
+    /** The folder holding a model's files. */
+    fun folder(spec: ModelSpec): File = file(spec.files.first()).parentFile ?: dir
+
+    private fun isInstalled(model: ModelFile) = file(model).let { it.isFile && it.length() == model.bytes }
+
+    fun isInstalled(spec: ModelSpec) = spec.files.all { isInstalled(it) }
 
     fun progress(spec: ModelSpec): Progress? = progress[spec.id]
 
@@ -39,8 +50,11 @@ class ModelStore(context: Context) {
 
     fun delete(spec: ModelSpec) {
         cancel(spec)
-        file(spec).delete()
-        partFile(spec).delete()
+        for (f in spec.files) {
+            file(f).delete()
+            partFile(f).delete()
+        }
+        folder(spec).takeIf { it != dir }?.delete() // only if empty
         progress.remove(spec.id)
         notifyChanged()
     }
@@ -52,30 +66,34 @@ class ModelStore(context: Context) {
     fun download(spec: ModelSpec) {
         if (progress[spec.id]?.running == true || isInstalled(spec)) return
         cancelled -= spec.id
-        progress[spec.id] = Progress(partFile(spec).length(), spec.bytes, running = true)
+        progress[spec.id] = Progress(downloaded(spec), spec.bytes, running = true)
         notifyChanged()
         thread(name = "download-${spec.id}") {
             progress[spec.id] = try {
-                fetch(spec)
+                val space = dir.usableSpace
+                if (space < spec.bytes - downloaded(spec) + 50_000_000) {
+                    throw IOException("Not enough free space: ${spec.bytes / 1_000_000} MB needed.")
+                }
+                for (f in spec.files) if (!isInstalled(f)) fetch(spec, f)
                 Progress(spec.bytes, spec.bytes, running = false)
             } catch (e: IOException) {
-                Progress(partFile(spec).length(), spec.bytes, running = false, error = e.message ?: "Download failed")
+                Progress(downloaded(spec), spec.bytes, running = false, error = e.message ?: "Download failed")
             }
             notifyChanged()
         }
     }
 
-    private fun partFile(spec: ModelSpec) = File(dir, spec.file + ".part")
+    /** Bytes already on the phone for [spec], finished or partial. */
+    private fun downloaded(spec: ModelSpec) = spec.files.sumOf { if (isInstalled(it)) it.bytes else partFile(it).length() }
 
-    private fun fetch(spec: ModelSpec) {
-        val part = partFile(spec)
-        if (dir.usableSpace < spec.bytes - part.length() + 50_000_000) {
-            throw IOException("Not enough free space: ${spec.bytes / 1_000_000} MB needed.")
-        }
+    private fun partFile(model: ModelFile) = File(dir, model.path + ".part")
+
+    private fun fetch(spec: ModelSpec, model: ModelFile) {
+        val part = partFile(model)
         var attempt = 0
         while (true) {
             try {
-                fetchOnce(spec, part)
+                fetchOnce(spec, model, part)
                 break
             } catch (e: IOException) {
                 if (spec.id in cancelled || ++attempt >= 5) throw e
@@ -83,17 +101,18 @@ class ModelStore(context: Context) {
             }
         }
 
-        if (!sha256(part).equals(spec.sha256, ignoreCase = true)) {
+        if (!sha256(part).equals(model.sha256, ignoreCase = true)) {
             part.delete()
             throw IOException("The download was damaged. Try again.")
         }
-        if (!part.renameTo(file(spec))) throw IOException("Couldn't save the model.")
+        if (!part.renameTo(file(model))) throw IOException("Couldn't save the model.")
     }
 
-    private fun fetchOnce(spec: ModelSpec, part: File) {
+    private fun fetchOnce(spec: ModelSpec, model: ModelFile, part: File) {
         val have = if (part.exists()) part.length() else 0L
-        if (have >= spec.bytes) return
-        val conn = URL(spec.url).openConnection() as HttpURLConnection
+        if (have >= model.bytes) return
+        part.parentFile?.mkdirs() // every attempt: the leftover cleanup may remove an empty folder
+        val conn = URL(model.url).openConnection() as HttpURLConnection
         conn.instanceFollowRedirects = true
         conn.connectTimeout = 20_000
         conn.readTimeout = 30_000
@@ -116,13 +135,13 @@ class ModelStore(context: Context) {
                         done += n
                         if (done - reported > 512 * 1024) {
                             reported = done
-                            progress[spec.id] = Progress(done, spec.bytes, running = true)
+                            progress[spec.id] = Progress(downloaded(spec), spec.bytes, running = true)
                             notifyChanged()
                         }
                     }
                 }
             }
-            if (done < spec.bytes) throw IOException("The connection dropped.")
+            if (done < model.bytes) throw IOException("The connection dropped.")
         } finally {
             conn.disconnect()
         }
@@ -139,6 +158,17 @@ class ModelStore(context: Context) {
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** Deletes models this version no longer uses (for example the Whisper English models from 0.1 and 0.2). */
+    private fun removeLeftovers() {
+        val known = ModelCatalog.knownPaths.flatMap { listOf(it, "$it.part") }.toSet()
+        dir.walkBottomUp().forEach { f ->
+            if (f == dir) return@forEach
+            val path = f.relativeTo(dir).invariantSeparatorsPath
+            if (f.isFile && path !in known) f.delete()
+            if (f.isDirectory) f.delete() // only removes empty folders
+        }
     }
 
     private fun notifyChanged() = main.post { listeners.forEach { it() } }

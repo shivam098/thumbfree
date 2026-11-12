@@ -83,18 +83,22 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Cache the English model
+      - name: Cache the test models
         uses: actions/cache@v4
         with:
           path: models
-          key: ggml-base.en-q8_0-a4d4a076
-      - name: Download the English model
+          key: models-whisper-base.en-a4d4a076-parakeet-110m-1
+      - name: Download the test models
         working-directory: .
         run: |
-          mkdir -p models
-          f=models/ggml-base.en-q8_0.bin
-          [ -f "$f" ] || curl -fsSL --retry 5 -o "$f" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin
-          echo "a4d4a0768075e13cfd7e19df3ae2dbc4a68d37d36a7dad45e8410c9a34f8c87e  $f" | sha256sum -c -
+          mkdir -p models/parakeet-tdt-110m
+          get() { [ -f "$2" ] || curl -fsSL --retry 5 -o "$2" "$1"; echo "$3  $2" | sha256sum -c -; }
+          get https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin models/ggml-base.en-q8_0.bin a4d4a0768075e13cfd7e19df3ae2dbc4a68d37d36a7dad45e8410c9a34f8c87e
+          p=https://github.com/shivam098/thumbfree/releases/download/models-parakeet-110m-1
+          get $p/encoder.int8.onnx models/parakeet-tdt-110m/encoder.int8.onnx 0f35509ddeb9b39002fb077d979a9fe74f06eb0bc4dd5c34f512f82e5111d657
+          get $p/decoder.int8.onnx models/parakeet-tdt-110m/decoder.int8.onnx f7c331c5504c2e593c76ed22b728e3f554af6c4a383dde862e719ced08b1da19
+          get $p/joiner.int8.onnx models/parakeet-tdt-110m/joiner.int8.onnx bf7dff69e9f2cdbe9943d70da358f38b361c115ba0105bae7e908e0d6ec782f6
+          get $p/tokens.txt models/parakeet-tdt-110m/tokens.txt 450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10
       - name: Run on an emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -106,4 +110,4 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none
           working-directory: .
-          script: bash scripts/android-device-test.sh apks models/ggml-base.en-q8_0.bin
+          script: bash scripts/android-device-test.sh apks models

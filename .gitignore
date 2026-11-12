@@ -10,3 +10,4 @@ captures/
 *.jks
 *.keystore
 *.p12
+android/app/libs/

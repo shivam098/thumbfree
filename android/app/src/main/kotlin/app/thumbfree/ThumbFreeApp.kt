@@ -12,7 +12,7 @@ import kotlin.reflect.KProperty
 class ThumbFreeApp : Application() {
     val prefs by lazy { Prefs(this) }
     val models by lazy { ModelStore(this) }
-    val engine by lazy { SpeechEngine() }
+    val engine by lazy { SpeechEngine { spec -> models.folder(spec) } }
 }
 
 val Context.thumbFree: ThumbFreeApp get() = applicationContext as ThumbFreeApp

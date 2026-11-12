@@ -114,4 +114,70 @@ object Vocabulary {
         if (!" ${normalized.joinToString(" ")} ".contains(padded)) return false
         return normalized.count { padded.contains(" $it ") } >= 2
     }
+
+    private val wordRegex = Regex("""[\p{L}\p{Mn}\p{Nd}][\p{L}\p{Mn}\p{Nd}'’-]*""")
+
+    /**
+     * Writes listed words the way they're listed when the recognizer got them nearly right: spacing and case
+     * ("git hub co-pilot" → "GitHub Copilot") for any entry, and small misspellings ("Kubirnets" → "Kubernetes") for
+     * entries of 8+ letters, at most one edit per 5 letters, same first letter. Short entries are only matched
+     * exactly, so ordinary words like "genre" never turn into "genres".
+     */
+    fun correct(text: String, entries: List<String>): String {
+        if (entries.isEmpty() || text.isEmpty()) return text
+        val targets = entries.mapNotNull { e -> compact(e).takeIf { it.length >= 3 }?.let { e to it } }
+            .sortedByDescending { it.second.length }
+        if (targets.isEmpty()) return text
+        val words = wordRegex.findAll(text).toList()
+        val out = StringBuilder()
+        var copied = 0
+        var i = 0
+        while (i < words.size) {
+            var best: Triple<Int, String, Int>? = null // words used, replacement, edits
+            for ((entry, target) in targets) {
+                val allowed = if (target.length >= 8) target.length / 5 else 0
+                val entryWords = entry.trim().split(Regex("\\s+")).size
+                for (n in maxOf(1, entryWords - 1)..minOf(entryWords + 2, words.size - i)) {
+                    val heard = compact(words.subList(i, i + n).joinToString(" ") { it.value })
+                    if (kotlin.math.abs(heard.length - target.length) > allowed || heard.isEmpty() || heard[0] != target[0]) continue
+                    val edits = distance(heard, target, allowed)
+                    if (edits <= allowed && (best == null || edits < best.third || (edits == best.third && n > best.first))) {
+                        best = Triple(n, entry.trim(), edits)
+                    }
+                }
+            }
+            val match = best
+            if (match == null) {
+                i++
+                continue
+            }
+            val start = words[i].range.first
+            val end = words[i + match.first - 1].range.last + 1
+            out.append(text, copied, start).append(match.second)
+            copied = end
+            i += match.first
+        }
+        return out.append(text, copied, text.length).toString()
+    }
+
+    private fun compact(s: String) = TranscriptText.normalize(s).replace(" ", "")
+
+    /** Levenshtein distance, or limit + 1 once it's certainly above [limit]. */
+    private fun distance(a: String, b: String, limit: Int): Int {
+        var prev = IntArray(b.length + 1) { it }
+        var cur = IntArray(b.length + 1)
+        for (x in 1..a.length) {
+            cur[0] = x
+            var rowMin = cur[0]
+            for (y in 1..b.length) {
+                cur[y] = minOf(prev[y] + 1, cur[y - 1] + 1, prev[y - 1] + if (a[x - 1] == b[y - 1]) 0 else 1)
+                rowMin = minOf(rowMin, cur[y])
+            }
+            if (rowMin > limit) return limit + 1
+            val t = prev
+            prev = cur
+            cur = t
+        }
+        return prev[b.length]
+    }
 }
