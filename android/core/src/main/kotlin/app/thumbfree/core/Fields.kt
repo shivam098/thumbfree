@@ -91,3 +91,27 @@ object PersonalDictionary {
         return map
     }
 }
+
+/**
+ * "Words I use often" (names, jargon): given to Whisper as a prompt so it spells them the way you do. Whisper can repeat
+ * its prompt on near-silent audio, so a transcript made only of list entries is dropped (port of VoiceAssistant's
+ * IsPromptEcho, but a single entry on its own is kept: that's indistinguishable from saying the word).
+ */
+object Vocabulary {
+    const val MAX_ENTRIES = 40
+
+    /** One entry per line or comma. */
+    fun parse(text: String): List<String> =
+        text.split('\n', ',').map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }.take(MAX_ENTRIES)
+
+    fun prompt(entries: List<String>): String? = if (entries.isEmpty()) null else entries.joinToString(", ")
+
+    fun isEcho(text: String, entries: List<String>): Boolean {
+        val heard = TranscriptText.normalize(text)
+        if (heard.isEmpty()) return false
+        val normalized = entries.map { TranscriptText.normalize(it) }.filter { it.isNotEmpty() }
+        val padded = " $heard "
+        if (!" ${normalized.joinToString(" ")} ".contains(padded)) return false
+        return normalized.count { padded.contains(" $it ") } >= 2
+    }
+}

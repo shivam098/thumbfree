@@ -32,8 +32,11 @@ tests/audio/                  short speech clips for the on-device tests
    and kept, so updates never grow with the length of the dictation.
 3. **Release.** Any preview still running is aborted (whisper.cpp abort callback). The recording is trimmed to the
    speech (energy-based detection with 250 ms margins), split at pauses into pieces of at most 14 s, and each piece is
-   transcribed with the full-quality settings (audio context 768, temperature fallback).
-4. **Clean up.** Common Whisper hallucinations on very short audio are dropped ("thanks for watching"). Then
+   transcribed with the full-quality settings (audio context 768, temperature fallback). Your "words I use often" list
+   is given to Whisper as a prompt ("GitHub Copilot, vibe coding, genres") so it spells them your way. It is not given
+   to the fast Hinglish model, where it was measured to garble the output.
+4. **Clean up.** Common Whisper hallucinations on very short audio are dropped ("thanks for watching"), and so is a
+   transcript that only repeats the word list (Whisper can echo its prompt). Then
    `DictationFormatter` removes fillers (English and Hinglish: "um", "basically", "thik hai na"…), applies spoken
    punctuation ("comma", "new line"), your personal dictionary and capitalization. It continues the sentence when the
    text before the cursor doesn't end with a full stop.
@@ -51,6 +54,7 @@ tests/audio/                  short speech clips for the on-device tests
 | Single speech thread, at most 4 decoding threads | No contention between preview and final pass; leaves cores for the app you're typing in |
 | Microphone only while dictating, no service | Zero battery use when you're not talking |
 | Quantized (q8) models, downloaded on demand | 78 MB for English; nothing bundled in the APK |
+| Accurate models are opt-in | small.en (264 MB) and Hinglish Apex (874 MB, large-v3-turbo). Apex skips the live preview, asks before downloading (memory, mobile data) and is unloaded after 3 idle minutes |
 
 ## Building
 

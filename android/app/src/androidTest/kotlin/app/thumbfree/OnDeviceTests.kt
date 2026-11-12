@@ -91,6 +91,22 @@ class WhisperOnDeviceTest {
         }
     }
 
+    @Test
+    fun word_list_guides_spelling_without_breaking_dictation() {
+        assumeTrue("no model at $modelFile", modelFile.canRead())
+        val words = listOf("GitHub Copilot", "vibe coding", "genres", "Kubernetes")
+        val engine = SpeechEngine()
+        WhisperModel.load(modelFile).use { model ->
+            val genres = engine.transcribe(model, wav("genres.wav"), words)!!
+            println("ThumbFree with word list: $genres")
+            assertTrue(genres, genres.lowercase().contains("videos of different genres"))
+            val logs = engine.transcribe(model, wav("send-logs.wav"), words)!!
+            assertTrue(logs, logs.lowercase().contains("send me the latest build logs"))
+            // Silence is never sent to Whisper, so it can't come back as the word list.
+            assertEquals("", engine.transcribe(model, FloatArray(16_000 * 2), words))
+        }
+    }
+
     /** 16-bit PCM mono 16 kHz WAV → floats. */
     private fun wav(name: String): FloatArray {
         val bytes = InstrumentationRegistry.getInstrumentation().context.assets.open(name).readBytes()

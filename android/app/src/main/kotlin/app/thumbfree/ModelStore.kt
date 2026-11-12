@@ -69,6 +69,9 @@ class ModelStore(context: Context) {
 
     private fun fetch(spec: ModelSpec) {
         val part = partFile(spec)
+        if (dir.usableSpace < spec.bytes - part.length() + 50_000_000) {
+            throw IOException("Not enough free space: ${spec.bytes / 1_000_000} MB needed.")
+        }
         var attempt = 0
         while (true) {
             try {

@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Only used to download the speech models; speech and text never leave the phone. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- To warn before a big download on mobile data. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:name=".ThumbFreeApp"

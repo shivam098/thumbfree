@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import app.thumbfree.core.DictationOptions
 import app.thumbfree.core.Language
+import app.thumbfree.core.ModelCatalog
 import app.thumbfree.core.PersonalDictionary
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
@@ -25,6 +26,7 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putString("language", if (value == Language.Hinglish) "hinglish" else "en").apply()
 
     var accurateEnglish by flag("accurate_english", false)
+    var accurateHinglish by flag("accurate_hinglish", false)
     var removeFillers by flag("remove_fillers", true)
     var spokenPunctuation by flag("spoken_punctuation", true)
     var livePreview by flag("live_preview", true)
@@ -34,6 +36,16 @@ class Prefs(context: Context) {
     var dictionary: String
         get() = sp.getString("dictionary", "") ?: ""
         set(value) = sp.edit().putString("dictionary", value).apply()
+
+    /** "Words I use often", one per line. */
+    var vocabulary: String
+        get() = sp.getString("vocabulary", "") ?: ""
+        set(value) = sp.edit().putString("vocabulary", value).apply()
+
+    fun accurate(language: Language) = if (language == Language.Hinglish) accurateHinglish else accurateEnglish
+
+    /** The speech model for the current language and accuracy choice. */
+    fun model(language: Language = this.language) = ModelCatalog.forLanguage(language, accurate(language))
 
     fun dictationOptions() = DictationOptions(
         removeFillerWords = removeFillers,

@@ -2,9 +2,12 @@ package app.thumbfree
 
 import android.Manifest
 import android.app.Activity
+import android.app.ActivityManager
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -88,8 +91,12 @@ class SetupActivity : Activity() {
         column.addView(languages)
         languageNote = text("", 13f, muted = true).spaced(6, 4)
         column.addView(languageNote)
-        column.addView(switch("Accurate English", "Bigger model: fewer mistakes, a bit slower", prefs.accurateEnglish) {
+        column.addView(switch("Accurate English", "Bigger model: fewer mistakes, a bit slower (264 MB)", prefs.accurateEnglish) {
             prefs.accurateEnglish = it
+            refresh()
+        })
+        column.addView(switch("Accurate Hindi + English", "Much bigger model: best Hinglish, several times slower, no live preview (874 MB)", prefs.accurateHinglish) {
+            prefs.accurateHinglish = it
             refresh()
         })
 
@@ -103,6 +110,29 @@ class SetupActivity : Activity() {
         column.addView(switch("Live preview", "Show words as you speak (uses more battery)", prefs.livePreview) { prefs.livePreview = it })
         column.addView(switch("Return to my keyboard", "Switch back after each dictation", prefs.switchBack) { prefs.switchBack = it })
         column.addView(switch("Vibrate", "A small tap when recording starts and stops", prefs.haptics) { prefs.haptics = it })
+
+        column.addView(heading("Words I use often"))
+        column.addView(
+            text(
+                "Names and jargon, one per line, so they're spelled your way (for example: GitHub Copilot, genres). " +
+                    "Used with English and accurate Hindi + English.",
+                13f, muted = true,
+            ).spaced(0, 6),
+        )
+        column.addView(EditText(this).apply {
+            setText(prefs.vocabulary)
+            hint = "GitHub Copilot\nvibe coding\ngenres"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            minLines = 3
+            gravity = Gravity.TOP or Gravity.START
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(s: Editable?) {
+                    prefs.vocabulary = s?.toString().orEmpty()
+                }
+            })
+        })
 
         column.addView(heading("Personal dictionary"))
         column.addView(text("One per line: what it hears = what to type. For example: journals = genres", 13f, muted = true).spaced(0, 6))
@@ -179,9 +209,33 @@ class SetupActivity : Activity() {
 
     private fun setLanguage(language: Language) {
         prefs.language = language
-        val spec = ModelCatalog.forLanguage(language, prefs.accurateEnglish)
-        if (!app.models.isInstalled(spec)) app.models.download(spec)
+        val spec = prefs.model(language)
+        // Big models wait for an explicit tap on Download (with the memory and data warning).
+        if (!app.models.isInstalled(spec) && spec.bytes < BIG_MODEL_BYTES) app.models.download(spec)
         refresh()
+    }
+
+    /** Starts a download; for big models, first explains the size, memory and mobile-data cost. */
+    private fun confirmDownload(spec: ModelSpec) {
+        if (spec.bytes < BIG_MODEL_BYTES) return app.models.download(spec)
+        val memory = ActivityManager.MemoryInfo().also { getSystemService(ActivityManager::class.java).getMemoryInfo(it) }
+        val gb = (memory.totalMem + 500_000_000) / 1_000_000_000
+        val metered = getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
+        val message = buildString {
+            append("This model is ${mb(spec.bytes)}. It is the most accurate, but it needs about 1.3 GB of free memory ")
+            append("and takes several seconds per sentence.\n\nThis phone has $gb GB of memory.")
+            if (gb < 8) append(" That may not be enough: Android can close the keyboard while it works.")
+            if (metered) append("\n\nYou're on mobile data. Wi-Fi is recommended.")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Download ${spec.label.substringBefore(" (")}?")
+            .setMessage(message)
+            .setPositiveButton("Download") { _, _ ->
+                app.models.download(spec)
+                refresh()
+            }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     private fun refresh() {
@@ -199,7 +253,7 @@ class SetupActivity : Activity() {
         hinglishButton.isSelected = hinglish
         styleChoice(englishButton, !hinglish)
         styleChoice(hinglishButton, hinglish)
-        val spec = ModelCatalog.forLanguage(prefs.language, prefs.accurateEnglish)
+        val spec = prefs.model()
         languageNote.text = when {
             app.models.isInstalled(spec) -> "Using “${spec.label}”."
             else -> "Needs “${spec.label}” (${mb(spec.bytes)}). Download it below."
@@ -262,7 +316,7 @@ class SetupActivity : Activity() {
             when {
                 store.progress(spec)?.running == true -> store.cancel(spec)
                 store.isInstalled(spec) -> store.delete(spec)
-                else -> store.download(spec)
+                else -> confirmDownload(spec)
             }
             this@SetupActivity.refresh()
         }
@@ -345,4 +399,8 @@ class SetupActivity : Activity() {
     }
 
     private fun mb(bytes: Long) = "${(bytes + 500_000) / 1_000_000} MB"
+
+    companion object {
+        private const val BIG_MODEL_BYTES = 300_000_000L
+    }
 }

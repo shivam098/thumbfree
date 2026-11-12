@@ -6,8 +6,10 @@ offline: speech is recognised on your device and never uploaded.
 - Hold the mic, talk, let go: the text appears where the cursor is.
 - Removes filler words ("um", "you know", "basically", "thik hai na"…) and repeated phrases.
 - Spoken punctuation: "comma", "full stop", "question mark", "new line", "new paragraph".
-- English, and Hindi + English (Hinglish) written in Roman letters.
-- A personal dictionary for names and words it gets wrong (`journals = genres`).
+- English, and Hindi + English (Hinglish) written in Roman letters, each with a fast model and an optional accurate one
+  (the accurate Hinglish model is 874 MB and best on phones with 8 GB+ memory).
+- A personal dictionary for words it gets wrong (`journals = genres`), and a "words I use often" list that helps
+  Whisper spell names and jargon your way.
 
 | Platform | Status |
 |---|---|

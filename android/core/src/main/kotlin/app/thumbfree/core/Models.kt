@@ -12,6 +12,10 @@ data class ModelSpec(
     val bytes: Long,
     val label: String,
     val language: Language,
+    /** Gets the "words I use often" list as a Whisper prompt (measured: it garbles the fast Hindi + English model). */
+    val usesVocabulary: Boolean = true,
+    /** Fast enough on phones to re-transcribe while you speak. */
+    val livePreview: Boolean = true,
 )
 
 object ModelCatalog {
@@ -43,16 +47,29 @@ object ModelCatalog {
         bytes = 81_768_585,
         label = "Hindi + English (typed in Roman letters)",
         language = Language.Hinglish,
+        usesVocabulary = false,
     )
 
-    val all = listOf(EnglishFast, Hinglish, EnglishAccurate)
+    /** Oriserve Whisper-Hindi2Hinglish-Apex (Apache-2.0, fine-tuned from large-v3-turbo), q8. Best Hinglish, but big. */
+    val HinglishAccurate = ModelSpec(
+        id = "hinglish-apex",
+        file = "ggml-hinglish-apex-q8_0.bin",
+        url = "https://github.com/shivam098/windows-voice-assistant/releases/download/models-hinglish-apex-1/ggml-hinglish-apex-q8_0.bin",
+        sha256 = "0b4324d2c1ad64f20883ee7fcd5d2bb0a8466287dc70d74bc47066200c28c719",
+        bytes = 874_188_075,
+        label = "Hindi + English, accurate (much slower; for phones with 8 GB+ memory)",
+        language = Language.Hinglish,
+        livePreview = false,
+    )
+
+    val all = listOf(EnglishFast, Hinglish, EnglishAccurate, HinglishAccurate)
 
     fun byId(id: String) = all.firstOrNull { it.id == id }
 
-    /** The model to use for a language. */
-    fun forLanguage(language: Language, accurateEnglish: Boolean) = when (language) {
-        Language.Hinglish -> Hinglish
-        Language.English -> if (accurateEnglish) EnglishAccurate else EnglishFast
+    /** The model to use for a language: the bigger, slower one when [accurate]. */
+    fun forLanguage(language: Language, accurate: Boolean) = when (language) {
+        Language.Hinglish -> if (accurate) HinglishAccurate else Hinglish
+        Language.English -> if (accurate) EnglishAccurate else EnglishFast
     }
 }
 

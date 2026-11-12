@@ -5,6 +5,7 @@ import app.thumbfree.core.Decoding
 import app.thumbfree.core.Hallucinations
 import app.thumbfree.core.SpeechAudio
 import app.thumbfree.core.TranscriptText
+import app.thumbfree.core.Vocabulary
 import app.thumbfree.whisper.WhisperModel
 import java.io.File
 import java.util.concurrent.Executors
@@ -51,22 +52,24 @@ class SpeechEngine {
     }
 
     /** Speech thread: a quick transcript for the live preview (no retries, context sized to the audio). */
-    fun preview(model: WhisperModel, audio: FloatArray): String? =
-        model.transcribe(audio, DecodeOptions(threads, Decoding.previewContext(audio.size), temperatureFallback = false))
+    fun preview(model: WhisperModel, audio: FloatArray, vocabulary: List<String> = emptyList()): String? =
+        model.transcribe(audio, DecodeOptions(threads, Decoding.previewContext(audio.size), temperatureFallback = false), Vocabulary.prompt(vocabulary))
             ?.let { TranscriptText.clean(it) }
+            ?.let { if (Vocabulary.isEcho(it, vocabulary)) "" else it }
 
     /**
      * Speech thread: the final transcript. Silence is trimmed (and nothing runs if there was no speech); long dictation
-     * is cut at pauses into pieces of at most 14 s. Null if aborted.
+     * is cut at pauses into pieces of at most 14 s. [vocabulary] is given to Whisper as a spelling hint. Null if aborted.
      */
-    fun transcribe(model: WhisperModel, audio: FloatArray): String? {
+    fun transcribe(model: WhisperModel, audio: FloatArray, vocabulary: List<String> = emptyList()): String? {
+        val prompt = Vocabulary.prompt(vocabulary)
         val regions = SpeechAudio.speech(audio)
         val span = SpeechAudio.trim(audio, regions) ?: return ""
         val parts = ArrayList<String>()
         for (piece in SpeechAudio.split(span, regions, Decoding.MAX_PIECE_SAMPLES)) {
             val samples = audio.copyOfRange(piece.start, piece.end)
-            val text = TranscriptText.clean(model.transcribe(samples, DecodeOptions(threads, Decoding.FINAL_AUDIO_CONTEXT)) ?: return null)
-            if (text.isNotEmpty() && !Hallucinations.isLikely(text, samples.size)) parts += text
+            val text = TranscriptText.clean(model.transcribe(samples, DecodeOptions(threads, Decoding.FINAL_AUDIO_CONTEXT), prompt) ?: return null)
+            if (text.isNotEmpty() && !Hallucinations.isLikely(text, samples.size) && !Vocabulary.isEcho(text, vocabulary)) parts += text
         }
         return parts.joinToString(" ")
     }

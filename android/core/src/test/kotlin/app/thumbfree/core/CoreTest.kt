@@ -136,7 +136,23 @@ class CoreTest {
         assertEquals(1500, Decoding.previewContext(40 * rate))
         assertEquals(4, Decoding.threads(8))
         assertEquals(2, Decoding.threads(2))
-        assertEquals(ModelCatalog.Hinglish, ModelCatalog.forLanguage(Language.Hinglish, accurateEnglish = true))
-        assertEquals(ModelCatalog.EnglishAccurate, ModelCatalog.forLanguage(Language.English, accurateEnglish = true))
+        assertEquals(ModelCatalog.Hinglish, ModelCatalog.forLanguage(Language.Hinglish, accurate = false))
+        assertEquals(ModelCatalog.HinglishAccurate, ModelCatalog.forLanguage(Language.Hinglish, accurate = true))
+        assertEquals(ModelCatalog.EnglishAccurate, ModelCatalog.forLanguage(Language.English, accurate = true))
+        assertFalse(ModelCatalog.Hinglish.usesVocabulary)
+        assertFalse(ModelCatalog.HinglishAccurate.livePreview)
+    }
+
+    @Test
+    fun vocabulary_becomes_a_prompt_and_echoes_are_dropped() {
+        val words = Vocabulary.parse("GitHub Copilot\n vibe coding, genres\n\ngenres\nGENRES\n")
+        assertEquals(listOf("GitHub Copilot", "vibe coding", "genres"), words)
+        assertEquals("GitHub Copilot, vibe coding, genres", Vocabulary.prompt(words))
+        assertEquals(null, Vocabulary.prompt(emptyList()))
+        assertTrue(Vocabulary.isEcho("GitHub Copilot, vibe coding, genres.", words))
+        assertTrue(Vocabulary.isEcho("Vibe coding, genres", words))
+        assertFalse(Vocabulary.isEcho("Genres.", words)) // saying one listed word is real dictation
+        assertFalse(Vocabulary.isEcho("I tested videos of different genres", words))
+        assertFalse(Vocabulary.isEcho("", words))
     }
 }

@@ -23,7 +23,7 @@ import app.thumbfree.core.FieldInfo
 import app.thumbfree.core.Insertion
 import app.thumbfree.core.Language
 import app.thumbfree.core.LivePreview
-import app.thumbfree.core.ModelCatalog
+import app.thumbfree.core.Vocabulary
 import java.io.File
 
 /**
@@ -46,6 +46,7 @@ class VoiceKeyboard : InputMethodService() {
     private var recorder: Recorder? = null
     private var preview: LivePreview? = null
     private var sessionModel: File? = null
+    private var sessionVocabulary: List<String> = emptyList()
     @Volatile private var previewAllowed = false
     private var previewBusy = false
     private var session = 0
@@ -226,7 +227,7 @@ class VoiceKeyboard : InputMethodService() {
             openSetup()
             return false
         }
-        val spec = ModelCatalog.forLanguage(prefs.language, prefs.accurateEnglish)
+        val spec = prefs.model()
         if (!app.models.isInstalled(spec)) {
             show("Download the “${spec.label}” speech model in ThumbFree first", Tone.Warn)
             openSetup()
@@ -242,11 +243,13 @@ class VoiceKeyboard : InputMethodService() {
         session++
         recorder = rec
         previewBusy = false
-        previewAllowed = prefs.livePreview
+        previewAllowed = prefs.livePreview && spec.livePreview
+        val vocabulary = if (spec.usesVocabulary) Vocabulary.parse(prefs.vocabulary) else emptyList()
+        sessionVocabulary = vocabulary
         main.removeCallbacks(unload)
         mic.recording = true
         haptic()
-        show("Listening…", Tone.Active)
+        show(if (prefs.livePreview && !spec.livePreview) "Listening… (no live preview with this model)" else "Listening…", Tone.Active)
 
         val file = app.models.file(spec)
         sessionModel = file
@@ -263,7 +266,7 @@ class VoiceKeyboard : InputMethodService() {
                 }
             }
         }
-        preview = LivePreview({ audio -> if (!previewAllowed) null else app.engine.loaded()?.let { app.engine.preview(it, audio) } })
+        preview = LivePreview({ audio -> if (!previewAllowed) null else app.engine.loaded()?.let { app.engine.preview(it, audio, vocabulary) } })
         main.postDelayed(previewTick, PREVIEW_MS)
         return true
     }
@@ -308,12 +311,13 @@ class VoiceKeyboard : InputMethodService() {
         show("Writing…", Tone.Active)
 
         val file = sessionModel ?: return
+        val vocabulary = sessionVocabulary
         val s = session
         app.engine.run {
             val text = try {
                 val model = app.engine.model(file)
                 model.resume()
-                app.engine.transcribe(model, audio)
+                app.engine.transcribe(model, audio, vocabulary)
             } catch (e: Exception) {
                 null
             }
@@ -410,7 +414,7 @@ class VoiceKeyboard : InputMethodService() {
         if (state != State.Idle) return
         prefs.language = if (prefs.language == Language.English) Language.Hinglish else Language.English
         refresh()
-        val spec = ModelCatalog.forLanguage(prefs.language, prefs.accurateEnglish)
+        val spec = prefs.model()
         if (!app.models.isInstalled(spec)) {
             show("Download “${spec.label}” in ThumbFree to use it", Tone.Warn)
         } else {
