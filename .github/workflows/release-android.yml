@@ -19,6 +19,8 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      - name: Install CMake for the NDK build
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmake;3.22.1" > /dev/null
       - name: Signing key
         env:
           KEYSTORE_B64: ${{ secrets.THUMBFREE_KEYSTORE_B64 }}
