@@ -1,0 +1,7 @@
+* text=auto
+android/gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.tsv text eol=lf
+*.wav binary
+*.jar binary

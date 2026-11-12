@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ThumbFree" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/tf_accent</item>
+        <item name="android:colorPrimary">@color/tf_accent</item>
+        <item name="android:windowBackground">@color/tf_bg</item>
+        <item name="android:statusBarColor">@color/tf_bg</item>
+        <item name="android:navigationBarColor">@color/tf_bg</item>
+    </style>
+</resources>

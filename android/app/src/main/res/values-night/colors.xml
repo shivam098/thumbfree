@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tf_accent">#A99BFF</color>
+    <color name="tf_accent_soft">#2E2A4F</color>
+    <color name="tf_recording">#FF6369</color>
+    <color name="tf_bg">#121214</color>
+    <color name="tf_surface">#1C1C20</color>
+    <color name="tf_key">#2A2A30</color>
+    <color name="tf_text">#ECECF1</color>
+    <color name="tf_muted">#A0A0AA</color>
+    <color name="tf_ok">#81C995</color>
+    <color name="tf_warn">#F28B82</color>
+</resources>
