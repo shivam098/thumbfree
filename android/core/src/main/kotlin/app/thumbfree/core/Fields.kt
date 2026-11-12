@@ -120,8 +120,9 @@ object Vocabulary {
     /**
      * Writes listed words the way they're listed when the recognizer got them nearly right: spacing and case
      * ("git hub co-pilot" → "GitHub Copilot") for any entry, and small misspellings ("Kubirnets" → "Kubernetes") for
-     * entries of 8+ letters, at most one edit per 5 letters, same first letter. Short entries are only matched
-     * exactly, so ordinary words like "genre" never turn into "genres".
+     * entries of 8+ letters, at most one edit per 5 letters, same first letter. Never across punctuation, never
+     * changing a number ("Windows 10" stays with "Windows 11" listed) and never dropping or adding an ending
+     * ("Priyanka's", "Chromebooks"). Short entries are only matched exactly, so "genre" never turns into "genres".
      */
     fun correct(text: String, entries: List<String>): String {
         if (entries.isEmpty() || text.isEmpty()) return text
@@ -133,15 +134,21 @@ object Vocabulary {
         var copied = 0
         var i = 0
         while (i < words.size) {
+            // Words from i that are separated only by spaces (a match never swallows punctuation).
+            var joinable = 1
+            while (i + joinable < words.size && text.substring(words[i + joinable - 1].range.last + 1, words[i + joinable].range.first).isBlank()) {
+                joinable++
+            }
             var best: Triple<Int, String, Int>? = null // words used, replacement, edits
             for ((entry, target) in targets) {
                 val allowed = if (target.length >= 8) target.length / 5 else 0
                 val entryWords = entry.trim().split(Regex("\\s+")).size
-                for (n in maxOf(1, entryWords - 1)..minOf(entryWords + 2, words.size - i)) {
+                for (n in maxOf(1, entryWords - 1)..minOf(entryWords + 2, joinable)) {
                     val heard = compact(words.subList(i, i + n).joinToString(" ") { it.value })
                     if (kotlin.math.abs(heard.length - target.length) > allowed || heard.isEmpty() || heard[0] != target[0]) continue
                     val edits = distance(heard, target, allowed)
-                    if (edits <= allowed && (best == null || edits < best.third || (edits == best.third && n > best.first))) {
+                    if (edits > allowed || (edits > 0 && !plausibleTypo(heard, target))) continue
+                    if (best == null || edits < best.third || (edits == best.third && n > best.first)) {
                         best = Triple(n, entry.trim(), edits)
                     }
                 }
@@ -161,6 +168,15 @@ object Vocabulary {
     }
 
     private fun compact(s: String) = TranscriptText.normalize(s).replace(" ", "")
+
+    private val endings = listOf("s", "es", "ed", "d", "ing")
+
+    /** A misspelling, not a different number or the same word with another ending. */
+    private fun plausibleTypo(heard: String, target: String): Boolean {
+        if (heard.filter { it.isDigit() } != target.filter { it.isDigit() }) return false
+        val (long, short) = if (heard.length >= target.length) heard to target else target to heard
+        return !(long.startsWith(short) && long.substring(short.length) in endings)
+    }
 
     /** Levenshtein distance, or limit + 1 once it's certainly above [limit]. */
     private fun distance(a: String, b: String, limit: Int): Int {

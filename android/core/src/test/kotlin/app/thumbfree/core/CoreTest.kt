@@ -160,6 +160,13 @@ class CoreTest {
         assertEquals("Review the Cabernets config", Vocabulary.correct("Review the Cabernets config", words))
         assertEquals("nothing to do here", Vocabulary.correct("nothing to do here", words))
         assertEquals("Kubernetes, Kubernetes!", Vocabulary.correct("Kubernets, kubernetes!", words))
+        // Numbers, endings and punctuation are never changed.
+        assertEquals("I upgraded to Windows 10 yesterday.", Vocabulary.correct("I upgraded to Windows 10 yesterday.", listOf("Windows 11")))
+        assertEquals("Pixel 8 Pro is fine", Vocabulary.correct("Pixel 8 Pro is fine", listOf("Pixel 9 Pro")))
+        assertEquals("Ask Priyanka's team.", Vocabulary.correct("Ask Priyanka's team.", listOf("Priyanka")))
+        assertEquals("We sold two Chromebooks.", Vocabulary.correct("We sold two Chromebooks.", listOf("Chromebook")))
+        assertEquals("Let me check it out. Look at this.", Vocabulary.correct("Let me check it out. Look at this.", listOf("Outlook")))
+        assertEquals("Open Outlook now", Vocabulary.correct("Open out look now", listOf("Outlook")))
         val formatter = DictationFormatter()
         assertEquals("Genres matter.", formatter.format(Vocabulary.correct("Genres matter.", words)))
     }

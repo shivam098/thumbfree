@@ -93,8 +93,9 @@ bash ../scripts/android-device-test.sh app/build/outputs/apk path/to/models   # 
 ```
 
 They check that Android's regex engine gives exactly the reference formatter's output, that the native engine loads,
-and that recorded sentences are transcribed by both engines (final pass, live preview, abort, word list). CI runs them on an emulator for every
-push.
+and that recorded sentences are transcribed by both engines (final pass, live preview, abort, word list). CI runs them
+on an emulator for every push. There, Parakeet 110M transcribes a 2.9 s sentence in about 0.3 s and Whisper base.en in
+about 1.3 s.
 
 ## Releases
 
