@@ -23,38 +23,50 @@ class HistoryStore(private val context: Context, private val enabled: () -> Bool
     private val lock = Any()
     private var cache: List<HistoryEntry>? = null
 
-    /** Newest first. Reads the file the first time (call off the main thread when it may be large). */
+    /** Newest first, without anything past 30 days. Reads the file the first time; rewrites it when entries expire. */
     fun entries(): List<HistoryEntry> = synchronized(lock) {
-        cache ?: History.prune(read(), System.currentTimeMillis()).also { cache = it }
+        val loaded = cache ?: read()
+        val kept = History.prune(loaded, System.currentTimeMillis())
+        cache = kept
+        if (kept.size != loaded.size) background { synchronized(lock) { write() } }
+        kept
     }
 
     /** Adds a dictation typed (or meant) for [app]. Any thread; does nothing when History is off. */
     fun add(text: String, app: String?) {
         if (text.isBlank() || !enabled()) return
         val entry = HistoryEntry(System.currentTimeMillis(), app.orEmpty(), text)
-        io.execute {
+        background {
             synchronized(lock) {
                 cache = History.prune(listOf(entry) + entries(), entry.time)
                 write()
             }
-            changed()
         }
     }
 
-    fun delete(entry: HistoryEntry) = io.execute {
+    fun delete(entry: HistoryEntry) = background {
         synchronized(lock) {
             cache = entries().filterNot { it == entry }
             write()
         }
-        changed()
     }
 
-    fun clear() = io.execute {
+    fun clear() = background {
         synchronized(lock) {
             cache = emptyList()
             file.delete()
         }
-        changed()
+    }
+
+    /** Runs [block] on the History thread. A failed write (a full disk) is never fatal: the keyboard shares this process. */
+    private fun background(block: () -> Unit) = io.execute {
+        try {
+            block()
+        } catch (e: Exception) {
+            android.util.Log.w("ThumbFree", "History: ${e.javaClass.simpleName}")
+        } finally {
+            changed()
+        }
     }
 
     fun addListener(listener: () -> Unit) = listeners.add(listener)
