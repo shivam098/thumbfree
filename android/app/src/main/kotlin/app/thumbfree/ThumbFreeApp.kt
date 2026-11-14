@@ -19,6 +19,7 @@ class ThumbFreeApp : Application() {
     val engine by lazy { SpeechEngine { spec -> models.folder(spec) } }
     val notifier by lazy { Notifier(this) }
     val samples by lazy { SampleStore(this) }
+    val history by lazy { HistoryStore(this) { prefs.keepHistory } }
 
     private val main = Handler(Looper.getMainLooper())
     private val unload = Runnable { if (!Dictation.anyBusy) engine.unload() }
@@ -85,6 +86,9 @@ class Prefs(context: Context, private val isInstalled: (ModelSpec) -> Boolean = 
 
     /** Show the floating mic when the bubble service is on (a quick way to pause it). */
     var bubble by flag("bubble", true)
+
+    /** Keep the text of recent dictations on this phone to copy again (History). */
+    var keepHistory by flag("keep_history", true)
 
     /** Keep recordings on this phone so you can choose to share them ("Help improve ThumbFree"). */
     var shareSamples by flag("share_samples", false)

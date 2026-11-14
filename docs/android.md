@@ -112,6 +112,17 @@ silent. When that happens, the keyboard or bubble shows a warning and a high-pri
 recording stops by itself, what was said so far is still written. If the text box goes away while a dictation is
 being written, the result is never typed elsewhere: it's kept in a notification to copy.
 
+## History
+
+Every dictation's final text goes to `HistoryStore` (on by default, Settings › History or hold ↺ on the keyboard):
+one line per entry (`time`, app package, text, escaped; format and 30-day / 500-entry pruning in core `History`) in
+`noBackupFilesDir/history.txt`, written on its own thread. Typed, undelivered (notification) and cursor-moved
+dictations are all kept, so nothing is lost. Not kept: password fields, and keyboard fields marked incognito
+(`IME_FLAG_NO_PERSONALIZED_LEARNING`). The bubble keeps everything but passwords: it can't see incognito, and History
+is local text the user can clear or turn off (unlike samples, which exist to be shared). `HistoryActivity` lists them
+(newest first, search once there are more than three): tap copies, hold offers Copy / Share / Delete; it's hidden
+from the recent-apps preview on Android 13+. Turning History off deletes it.
+
 ## First-run guide and data choice
 
 `OnboardingActivity` covers why ThumbFree is different (offline), the microphone, the model download, the keyboard,

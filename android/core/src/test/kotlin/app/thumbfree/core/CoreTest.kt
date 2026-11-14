@@ -175,6 +175,27 @@ class CoreTest {
     }
 
     @Test
+    fun history_round_trips_prunes_and_searches() {
+        val email = HistoryEntry(1_000, "com.google.android.gm", "Hey Tim,\n\nAre you free?\tThanks, C:\\Ben")
+        assertEquals(email, History.decode(History.encode(email)))
+        assertEquals(1, History.encode(email).lines().size)
+        assertEquals(null, History.decode("garbage"))
+        assertEquals(null, History.decode("12\tapp\t   "))
+
+        val now = History.MAX_AGE_MS + 10_000
+        val old = HistoryEntry(5_000, "", "too old")
+        val recent = (1..History.MAX_ENTRIES + 5).map { HistoryEntry(now - it, "", "entry $it") }
+        val kept = History.prune(recent + old, now)
+        assertEquals(History.MAX_ENTRIES, kept.size)
+        assertEquals("entry 1", kept.first().text)
+        assertTrue(kept.none { it.text == "too old" })
+
+        val two = listOf(HistoryEntry(2, "", "Send me the build logs"), HistoryEntry(1, "", "Call mom"))
+        assertEquals(listOf(two[0]), History.search(two, " logs  SEND "))
+        assertEquals(two, History.search(two, ""))
+    }
+
+    @Test
     fun word_list_fixes_near_misses_but_not_ordinary_words() {
         val words = listOf("Kubernetes", "GitHub Copilot", "genres", "vibe coding")
         assertEquals("Review the Kubernetes config.", Vocabulary.correct("Review the Kubirnets config.", words))

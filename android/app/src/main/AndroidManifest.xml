@@ -37,6 +37,12 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
+        <activity
+            android:name=".HistoryActivity"
+            android:exported="false"
+            android:label="History"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name=".VoiceKeyboard"
             android:exported="true"

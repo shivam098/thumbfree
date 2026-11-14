@@ -121,7 +121,8 @@ Screenshots to take on the Pixel, in this order:
 ### Data safety
 
 ThumbFree doesn't send any user data off the device itself. The optional "Help improve ThumbFree" sharing goes
-through Android's share sheet, to an app and recipient the user picks each time (a user-initiated transfer).
+through Android's share sheet, to an app and recipient the user picks each time (a user-initiated transfer). History
+(the text of recent dictations) is stored only on the device, which Play doesn't count as collection.
 
 | Question | Answer |
 |---|---|
