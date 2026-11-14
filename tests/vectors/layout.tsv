@@ -1,0 +1,36 @@
+# flags: m = multi-line field, s = dictation starts the text, e = email app; - = none. Input is a raw transcript; the test runs DictationFormatter then Layout.
+mse	Hey Tim, would love to connect. Are you available on Friday at 3 PM... actually 4 PM? Thanks, Ben.	Hey Tim,\n\nWould love to connect. Are you available on Friday at 4 PM?\n\nThanks,\nBen
+ms	Hey Tim, would love to connect. Are you available on Friday at 3 PM... actually 4 PM? Thanks, Ben.	Hey Tim,\n\nWould love to connect. Are you available on Friday at 4 PM?\n\nThanks,\nBen
+mse	Hello team, quick update on the release. We ship on Friday. Best regards, Priya Sharma.	Hello team,\n\nQuick update on the release. We ship on Friday.\n\nBest regards,\nPriya Sharma
+mse	Can you send me the build logs? Thanks, Ben.	Can you send me the build logs?\n\nThanks,\nBen
+mse	Hi Sam, the report is attached. Thanks!	Hi Sam,\n\nThe report is attached.\n\nThanks!
+ms	Hi, are you coming tonight? Thanks.	Hi, are you coming tonight? Thanks.
+ms	Thank you for your help.	Thank you for your help.
+m	Hey Tim, would love to connect. Thanks, Ben.	Hey Tim, would love to connect. Thanks, Ben.
+s	Hey Tim, would love to connect. Thanks, Ben.	Hey Tim, would love to connect. Thanks, Ben.
+mse	Thanks for your help yesterday. It made a big difference.	Thanks for your help yesterday. It made a big difference.
+ms	Things to do today: order groceries, go on a walk, and call mom.	Things to do today:\n- Order groceries.\n- Go on a walk.\n- Call mom.
+ms	Things to do today, order groceries, go on a walk and call mom.	Things to do today:\n- Order groceries.\n- Go on a walk.\n- Call mom.
+ms	My shopping list: milk, eggs, bread and butter.	My shopping list:\n- Milk.\n- Eggs.\n- Bread and butter.
+ms	Shopping list bullet point milk bullet point eggs bullet point bread	Shopping list:\n- Milk.\n- Eggs.\n- Bread.
+ms	My plan: first, book the flights, second, find a hotel, and third, pack the bags.	My plan:\n1. Book the flights.\n2. Find a hotel.\n3. Pack the bags.
+ms	The agenda was long, boring, and pointless.	The agenda was long, boring, and pointless.
+ms	I need to finish the list, then email Bob.	I need to finish the list, then email Bob.
+ms	At first I was scared, but then it was fine.	At first I was scared, but then it was fine.
+ms	Tasks, then lunch.	Tasks, then lunch.
+s	Things to do today: order groceries, go on a walk, and call mom.	Things to do today: order groceries, go on a walk, and call mom.
+-	Let's meet on Monday, sorry, Tuesday at 5.	Let's meet on Tuesday at 5.
+-	Call me at 3 PM, actually 4.	Call me at 4 PM.
+-	I have 2, actually 3 kids.	I have 3 kids.
+-	Chapter 2. Actually 3 people came.	Chapter 2. Actually 3 people came.
+-	We met in 2023, actually 2024.	We met in 2023, actually 2024.
+-	Actually, I think it's fine.	Actually, I think it's fine.
+ms	We should bite the bullet and ship it.	We should bite the bullet and ship it.
+ms	I took the bullet train to Osaka.	I took the bullet train to Osaka.
+ms	We need a bullet-proof plan.	We need a bullet-proof plan.
+ms	Packing list bullet point passport next bullet charger	Packing list:\n- Passport.\n- Charger.
+-	The rate is 2.5, actually 3 percent.	The rate is 2.5, actually 3 percent.
+-	It's rated 4.5, actually 4.7.	It's rated 4.5, actually 4.7.
+-	I'm free on Friday. Actually, tomorrow I'm busy.	I'm free on Friday. Actually, tomorrow I'm busy.
+-	The call is at 3 PM. Actually, 2 of us can't make it.	The call is at 3 PM. Actually, 2 of us can't make it.
+-	Let's meet today, sorry, tomorrow.	Let's meet tomorrow.

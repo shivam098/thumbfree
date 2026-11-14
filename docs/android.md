@@ -28,12 +28,15 @@ android/
                  abort). Generic arm64 (ARMv8.0) and x86_64 builds.
   whisper-v82/   The same engine built for ARMv8.2 (dot product + fp16): about 2× faster on phones from ~2018 on.
                  Picked at run time from /proc/cpuinfo, with the generic build as fallback.
-  app/           The keyboard (VoiceKeyboard), the setup screen (SetupActivity), the recognizers (Whisper and
-                 Parakeet behind one interface), the recorder, model downloads and settings. Views are built in code:
-                 no AppCompat, Compose or other UI libraries, so the keyboard opens fast. sherpa-onnx comes from its
-                 official AAR (2.0.1, ONNX Runtime linked in), downloaded by Gradle and pinned by SHA-256.
+  app/           The keyboard (VoiceKeyboard), the bubble (BubbleService + MicService), the first-run guide
+                 (OnboardingActivity), settings (SetupActivity), the shared dictation controller (Dictation), the
+                 recognizers (Whisper and Parakeet behind one interface), the recorder, notifications, opt-in samples
+                 and model downloads. Views are built in code: no AppCompat, Compose or other UI libraries, so the
+                 keyboard opens fast. sherpa-onnx comes from its official AAR (2.0.1, ONNX Runtime linked in),
+                 downloaded by Gradle and pinned by SHA-256.
 third_party/whisper.cpp   git submodule, pinned to v1.9.5
 tests/vectors/formatter.tsv   inputs and expected outputs generated from the C# reference formatter
+tests/vectors/layout.tsv      emails, lists and corrections (formatter + layout), checked on the JVM and on a device
 tests/audio/                  short speech clips for the on-device tests
 ```
 
@@ -55,9 +58,49 @@ tests/audio/                  short speech clips for the on-device tests
    `DictationFormatter` removes fillers (English and Hinglish: "um", "basically", "thik hai na"…), applies spoken
    punctuation ("comma", "new line"), your personal dictionary and capitalization. It continues the sentence when the
    text before the cursor doesn't end with a full stop.
-5. **Insert** with `InputConnection.commitText`, adding a space if needed. In single-line fields new lines become
+5. **Lay out** (Smart formatting, on by default): `Layout` keeps only a spoken correction of a time or day ("3 pm…
+   actually 4 pm" → "4 pm"), and in multi-line fields turns an email into greeting / body / sign-off paragraphs (in
+   email apps, or anywhere when there's both a greeting and a signed-off name) and a spoken list into bullets ("bullet
+   point …", "first … second … third …", or a list heading such as "Things to do today:" followed by three or more
+   items). It is deliberately conservative; `tests/vectors/layout.tsv` holds the cases that must stay unchanged too.
+6. **Insert** with `InputConnection.commitText`, adding a space if needed. In single-line fields new lines become
    spaces. Password fields are refused.
-6. After 3 idle minutes the model is unloaded to give the memory back.
+7. After 3 idle minutes the model is unloaded to give the memory back.
+
+## The bubble
+
+`BubbleService` is an accessibility service (declared `isAccessibilityTool=false`, with the disclosure shown before
+Android's settings page). It listens only for focus and window changes. When an editable field in another app has
+focus and a keyboard is on screen, it adds a floating mic (`TYPE_ACCESSIBILITY_OVERLAY`, not focusable, so the text
+box keeps focus). It stays hidden while the ThumbFree keyboard is in use.
+
+Tapping it starts `MicService`, a foreground service of type `microphone`: Android lets an app that isn't on screen
+record only from one, and allows starting it because the bubble is a visible window. Then the same `Dictation` the
+keyboard uses records and transcribes. The text goes into the field that had focus when you tapped:
+
+1. `ACTION_SET_TEXT` with the selection replaced, then `ACTION_SET_SELECTION` (native text boxes; the clipboard is
+   left alone).
+2. Otherwise the clipboard plus `ACTION_PASTE` (web pages, rich editors). The clip is marked sensitive and the
+   previous clip is put back when Android lets the app read it.
+3. If neither works or the box has gone, the text is kept in a notification with **Tap to copy**.
+
+## Never speaking into the void
+
+`Dictation` watches the recording. Exact digital silence for more than a second at the start, or three seconds later
+on, means Android has cut the app off the microphone (a call or another app took it). Real rooms are never exactly
+silent. When that happens, the keyboard or bubble shows a warning and a high-priority notification is posted. If
+recording stops by itself, what was said so far is still written. If the text box goes away while a dictation is
+being written, the result is never typed elsewhere: it's kept in a notification to copy.
+
+## First-run guide and data choice
+
+`OnboardingActivity` covers why ThumbFree is different (offline), the microphone, the model download, the keyboard,
+practice rounds for an email and a list, the bubble, notifications, an optional "What do you do?" (adds that
+field's names and acronyms to "Words I use often", on the phone only) and the data choice. "Keep everything private"
+is the default. "Help improve ThumbFree" keeps samples from the keyboard in app storage: 16 kHz WAV, recognised text,
+typed text, model and app version. It never keeps them from the bubble, which can't tell whether a field is
+incognito. Storage is capped at 300 samples or 150 MB. **Share** zips them and hands the zip to the share sheet
+through `SampleProvider`; there is no upload code.
 
 ## Efficiency choices
 

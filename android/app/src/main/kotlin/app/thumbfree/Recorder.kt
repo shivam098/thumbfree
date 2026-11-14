@@ -9,9 +9,10 @@ import app.thumbfree.core.SpeechAudio
 
 /**
  * 16 kHz mono capture, only between [start] and [stop]. Audio stays in memory and is never written to storage.
- * [onLevel] gets the loudness of each 100 ms chunk (on the capture thread).
+ * [onLevel] gets the loudness of each 100 ms chunk, and [onEnded] is called if recording stops by itself (the system
+ * took the microphone); both on the capture thread.
  */
-class Recorder(private val onLevel: (Float) -> Unit) {
+class Recorder(private val onLevel: (Float) -> Unit, private val onEnded: () -> Unit = {}) {
     private val lock = Any()
     private var data = FloatArray(RATE * 20)
     private var size = 0
@@ -26,6 +27,13 @@ class Recorder(private val onLevel: (Float) -> Unit) {
     /** True if every sample so far is exactly zero (another app holds the microphone). */
     @Volatile var silentSoFar = true
         private set
+
+    /** Samples since the microphone last gave anything but exact zeros (Android silences it for a call or another app). */
+    @Volatile var silentRun = 0
+        private set
+
+    /** True once the 10-minute limit is reached (audio after it is not kept). */
+    val full: Boolean get() = synchronized(lock) { size >= MAX_SAMPLES }
 
     @SuppressLint("MissingPermission") // checked by the caller
     fun start(): Boolean {
@@ -56,6 +64,7 @@ class Recorder(private val onLevel: (Float) -> Unit) {
 
         synchronized(lock) { size = 0 }
         silentSoFar = true
+        silentRun = 0
         record = rec
         running = true
         worker = Thread({ capture(rec) }, "microphone").also { it.start() }
@@ -76,9 +85,15 @@ class Recorder(private val onLevel: (Float) -> Unit) {
                     size += n
                 }
             }
-            if (silentSoFar && (0 until n).any { chunk[it] != 0f }) silentSoFar = false
+            if ((0 until n).any { chunk[it] != 0f }) {
+                silentSoFar = false
+                silentRun = 0
+            } else {
+                silentRun += n
+            }
             onLevel(SpeechAudio.rms(chunk, 0, n))
         }
+        if (running) onEnded()
     }
 
     /** A copy of the audio from [from] to now. */

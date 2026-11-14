@@ -3,4 +3,7 @@
     <string name="app_name">ThumbFree</string>
     <string name="keyboard_name">ThumbFree voice</string>
     <string name="subtype_voice">Voice typing (English, Hindi + English)</string>
+    <string name="bubble_name">ThumbFree bubble</string>
+    <string name="bubble_summary">A floating mic beside any keyboard: tap it, talk, and your words are typed where your cursor is. Offline.</string>
+    <string name="bubble_description">ThumbFree bubble shows a small mic next to your keyboard when you type in other apps. Tap it and speak, and ThumbFree types what you said into the text box you are in.\n\nThis access is used only to find the focused text box and put your dictation there. ThumbFree does not read, store or send anything else on your screen, and speech is recognised on this phone without the internet.\n\nLeave the shortcut off.</string>
 </resources>
