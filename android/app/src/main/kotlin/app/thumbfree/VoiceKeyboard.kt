@@ -233,9 +233,9 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     override fun onWarning(message: String) = show(message, Tone.Warn)
 
     /** Recording stopped (tapped, the 10-minute limit, or another app took the microphone): now transcribing. */
-    override fun onFinishing() {
+    override fun onFinishing(reason: String?) {
         setState(State.Transcribing)
-        show("Transcribing…", Tone.Active)
+        show(reason ?: "Transcribing…", if (reason == null) Tone.Active else Tone.Warn)
     }
 
     override fun onTranscript(result: Dictation.Transcript?) {
@@ -343,12 +343,12 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         mic.transcribing = value == State.Transcribing
         cancelKey.visibility = if (value == State.Recording) View.VISIBLE else View.GONE
         main.removeCallbacks(clock)
-        if (value == State.Recording) clock.run()
         hint.text = when (value) {
             State.Idle -> "Tap to talk"
-            State.Recording -> "" // set by the clock
+            State.Recording -> "0:00 · tap when you're done"
             State.Transcribing -> "Transcribing…"
         }
+        if (value == State.Recording) main.postDelayed(clock, 1000)
     }
 
     /** "0:07 · tap when you're done" while recording. */

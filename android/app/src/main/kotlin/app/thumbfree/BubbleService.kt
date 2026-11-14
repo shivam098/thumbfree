@@ -295,10 +295,10 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
         MicService.stop(this) // the transcript is made without the microphone
     }
 
-    override fun onFinishing() {
+    override fun onFinishing(reason: String?) {
         mic.recording = false
         mic.transcribing = true
-        say("Transcribing…")
+        say(reason ?: "Transcribing…")
         MicService.stop(this)
     }
 
