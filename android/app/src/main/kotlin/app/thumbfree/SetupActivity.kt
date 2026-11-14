@@ -40,7 +40,7 @@ class SetupActivity : Activity() {
     private lateinit var micStep: Step
     private lateinit var enableStep: Step
     private lateinit var pickStep: Step
-    private lateinit var bubbleStep: Step
+    private var bubbleStep: Step? = null
     private lateinit var notifyStep: Step
     private lateinit var vocabularyBox: EditText
     private lateinit var professionButton: Button
@@ -92,7 +92,7 @@ class SetupActivity : Activity() {
         pickStep = step(column, "3", "Switch to it", "Or tap the keyboard icon at the bottom of any keyboard.", "Choose keyboard") {
             getSystemService(InputMethodManager::class.java).showInputMethodPicker()
         }
-        bubbleStep = step(column, "+", "The bubble (optional)", "A floating mic beside any keyboard: keep Gboard and still dictate.", "Set up") {
+        if (BuildConfig.HAS_BUBBLE) bubbleStep = step(column, "+", "The bubble (optional)", "A floating mic beside any keyboard: keep Gboard and still dictate.", "Set up") {
             startActivity(Intent(this, OnboardingActivity::class.java).putExtra(OnboardingActivity.EXTRA_STEP, "Bubble"))
         }
         notifyStep = step(column, "+", "Notifications (recommended)", "Get told if the microphone goes silent, and never lose a dictation.", "Allow") {
@@ -131,7 +131,7 @@ class SetupActivity : Activity() {
         column.addView(switch("Live preview", "Show words as you speak (uses more battery)", prefs.livePreview) { prefs.livePreview = it })
         column.addView(switch("Return to my keyboard", "Switch back after each dictation", prefs.switchBack) { prefs.switchBack = it })
         column.addView(switch("Vibrate", "A small tap when recording starts and stops", prefs.haptics) { prefs.haptics = it })
-        column.addView(switch("Show the bubble", "When the bubble is turned on in Android's accessibility settings", prefs.bubble) { prefs.bubble = it })
+        if (BuildConfig.HAS_BUBBLE) column.addView(switch("Show the bubble", "When the bubble is turned on in Android's accessibility settings", prefs.bubble) { prefs.bubble = it })
 
         column.addView(heading("Words I use often"))
         column.addView(
@@ -316,7 +316,7 @@ class SetupActivity : Activity() {
         }
         modelRows.forEach { it.refresh(it.spec == spec) }
 
-        bubbleStep.set(done = bubbleEnabled(), available = true)
+        bubbleStep?.set(done = bubbleEnabled(), available = true)
         notifyStep.set(done = app.notifier.allowed, available = true)
         val summary = app.samples.summary()
         samplesNote.text = when {

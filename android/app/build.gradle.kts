@@ -80,6 +80,26 @@ android {
         }
     }
 
+    // Play Protect blocks installing apps that declare an accessibility service from a browser or file manager in
+    // some countries (India's enhanced fraud protection), so the bubble ships separately:
+    //   standard: everything but the bubble; installs from GitHub anywhere.
+    //   bubble:   adds the bubble (src/bubble/AndroidManifest.xml); for Play Store or adb installs.
+    flavorDimensions += "edition"
+    productFlavors {
+        create("standard") {
+            dimension = "edition"
+            buildConfigField("boolean", "HAS_BUBBLE", "false")
+        }
+        create("bubble") {
+            dimension = "edition"
+            buildConfigField("boolean", "HAS_BUBBLE", "true")
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
     sourceSets["androidTest"].assets.srcDirs(rootProject.file("../tests/vectors"), rootProject.file("../tests/audio"))
 
     compileOptions {
