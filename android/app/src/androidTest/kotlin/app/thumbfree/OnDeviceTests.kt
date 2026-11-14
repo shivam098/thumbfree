@@ -216,6 +216,7 @@ class StreamingOnDeviceTest {
             assertTrue("punctuated: $text", text.any { c -> c == '.' || c == ',' || c == '?' })
 
             val logs = timed("kroko whole recording", wav("send-logs.wav")) { it.transcribe(wav("send-logs.wav"), preview = false) }!!
+            assertTrue("ends like a sentence: $logs", logs.endsWith("."))
             assertTrue(logs, logs.contains("send me the latest build logs", ignoreCase = true))
 
             it.abort()
