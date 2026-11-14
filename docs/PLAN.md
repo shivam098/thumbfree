@@ -1,234 +1,419 @@
 # ThumbFree: plan
 
-Private, on-device dictation for **Windows, macOS and Android**. You hold a key and speak, and clean text appears
-wherever your cursor is. It works well in English and in Hindi + English (Hinglish) typed in Roman letters.
+Private, on-device dictation for **Android, iPhone, Mac and Windows**. You speak, and clean text appears wherever your
+cursor is. It works in English and in Hindi + English (Hinglish) typed in Roman letters, and **it never needs the
+internet**: speech is recognised on the device.
 
 ThumbFree is the dictation half of Voice Assistant **without "Hey Jarvis"**: no wake word, no voice commands, no
-navigation, no idea board. Because the microphone is on only while you dictate, there is no always-on listening and no
-battery drain when idle.
+navigation, no idea board. The microphone is on only while you dictate, so there's no always-on listening and no battery
+drain when idle.
 
-## 1. Name
+**Status (Nov 2026):** Android is built (v0.4.0: voice keyboard, bubble, first-run guide). Windows exists as Voice
+Dictation 0.3. iPhone and Mac are next. [Section 3](#3-feature-reference-built-on-android-copy-to-every-platform) is the
+feature reference that every platform implements.
+
+## 1. Positioning: offline is the selling point
+
+Most voice-typing apps send every dictation to a server. Wispr Flow, the best known, is cloud-only on every platform: it
+can't transcribe without a connection. ThumbFree never does:
+
+- **Your voice never leaves your device.** There's no account and no cloud, and nobody else hears what you said.
+- **Works anywhere.** On a plane, in the metro, with no signal: just as fast.
+- **Nothing to trust us with.** No upload code paths. Sharing data is opt-in, kept on the device, and sent only by you.
+
+Use this line first everywhere: the store listing, the first screen of the guide, the README and the About text.
+Suggested tagline: *"Type with your voice, not your thumbs. 100% offline."*
+
+## 2. Name
 
 | Option | Notes |
 |---|---|
-| **ThumbFree** (recommended) | Your idea. It describes the benefit (no thumbs on a phone, no fingers on a keyboard). I found no dictation product with this name, and `shivam098/thumbfree` is free. |
-| Zubaan ("tongue / language" in Hindi-Urdu) | Signals the Hinglish strength. Check trademarks first (there is a publisher called Zubaan Books). |
-| SayWrite, Bolo | **Taken**: both are existing open-source dictation apps for Mac/Windows. Don't use them. |
+| **ThumbFree** (chosen) | Describes the benefit (no thumbs on a phone, no fingers on a keyboard). Repo `github.com/shivam098/thumbfree`. |
+| Zubaan ("tongue / language" in Hindi-Urdu) | Signals the Hinglish strength. Check trademarks (there is a publisher called Zubaan Books). |
+| SayWrite, Bolo | **Taken**: existing open-source dictation apps. |
 
-Repo: `github.com/shivam098/thumbfree`. Product name: **ThumbFree**. App IDs: `app.thumbfree.windows`,
-`app.thumbfree.mac`, `app.thumbfree.android`.
+App IDs: `app.thumbfree.android`, `app.thumbfree.ios` (with `app.thumbfree.ios.keyboard`), `app.thumbfree.mac`,
+`app.thumbfree.windows`. Before store listings, do a quick trademark search (USPTO, EUIPO, India IP office).
 
-Before publishing to the Microsoft, Apple or Google stores, do a quick trademark search (USPTO, EUIPO, India IP office)
-and check the store listings.
+## 3. Feature reference (built on Android, copy to every platform)
 
-## 2. What ThumbFree does (v1, all three platforms)
+Each feature below shipped on Android between v0.1 and v0.4. It came from testing on a Pixel 11 and comparing with
+Wispr Flow's onboarding. The rules are written so the iPhone, Mac and Windows apps behave identically. **Shared test
+data proves it:** every port must pass `tests/vectors/formatter.tsv` and `tests/vectors/layout.tsv` on the device
+itself, not just on a computer, because regex engines differ.
 
-| Feature | Notes |
+### 3.1 Speech engines and models
+
+| Language | Default model | Accurate model (opt-in) | Engine |
+|---|---|---|---|
+| English | NVIDIA Parakeet TDT 110M int8: 137 MB, punctuates and capitalizes itself | Parakeet TDT 0.6B v2 int8: 661 MB, best on the Open ASR leaderboard | sherpa-onnx (ONNX Runtime) |
+| Hindi + English (Roman letters) | Oriserve Whisper-Hindi2Hinglish-Swift q8: 82 MB | Oriserve …-Apex q8: 874 MB (large-v3-turbo) | whisper.cpp |
+
+- **Why two engines:** Parakeet is more accurate and much faster than Whisper for English (on the Android emulator,
+  0.27 s for a 2.9 s sentence vs 1.3 s for Whisper base.en; on a Snapdragon X laptop, 17 s of speech in 0.4 s). But it
+  has no Hindi. Nothing open beats the Oriserve fine-tunes for Hinglish in Roman letters (researched Nov 2026: Canary,
+  Moonshine, IndicConformer and Sarvam don't fit).
+- **Models download on demand**, never bundled. They're pinned by SHA-256, and downloads resume after a dropped
+  connection. Multi-file models live in their own folder. Models no longer used are deleted on upgrade.
+- **Big models (over 300 MB) ask first:** size, the phone's memory against a recommendation (6 GB for 0.6B, 8 GB for
+  Apex), and a mobile-data warning. Free space is checked before downloading.
+- **Live preview is off for the big models** (too slow to re-run every second on a phone).
+- **Efficiency:** one speech thread, at most 4 decoding threads, model unloaded after 3 idle minutes, microphone only
+  while dictating.
+- **Future (not started):** run Apex on the Qualcomm NPU (about 0.3 s encoder on a Snapdragon 8 Elite, per Qualcomm AI
+  Hub) and on the Apple Neural Engine (Core ML).
+
+### 3.2 Text pipeline (same order everywhere)
+
+1. **Trim and split:** energy-based speech detection with 250 ms margins; nothing runs if there was no speech. Long
+   dictation is cut at pauses (pieces of at most 30 s for Parakeet, 14 s for Whisper).
+2. **Transcribe** each piece. Only the accurate Hinglish model gets the word list as a prompt. The fast one garbles
+   with a prompt, and Parakeet's hotwords made results worse in tests.
+3. **Drop hallucinations:** "thanks for watching" and similar on audio under 2.5 s. Also drop text that only repeats the
+   prompt.
+4. **Word-list near-miss fix** (3.4).
+5. **Formatter** (C# reference, ported): fillers in English and Hinglish ("um", "basically", "thik hai na", "Haan to
+   like…", repeated phrases), spoken punctuation ("comma", "new line", "new paragraph"), "scratch that", the personal
+   dictionary and capitalization. It continues the sentence when the text before the cursor doesn't end with `.!?`.
+6. **Layout** (3.3, "Smart formatting", on by default).
+7. **Field rules:** new lines become spaces in single-line fields; add a space when needed; refuse password fields.
+8. **Insert**, only into the field the dictation started in (3.6).
+
+### 3.3 Smart formatting: emails, lists, corrections
+
+All rules are deliberately conservative. `layout.tsv` holds both the cases to change and the ones that must stay as
+they are.
+
+**Corrections, in every field.** "Friday at 3 pm… actually 4 pm" → "Friday at 4 pm".
+
+- Markers: *actually, sorry, I mean, no wait, or rather, make it/that*.
+- Only these pairs are corrected: time → time, number → time, day → day, and time → number (keeping am/pm: "3 PM,
+  actually 4" → "4 PM"). Number → number is corrected only inside a sentence.
+- Never inside a decimal: "2.5, actually 3" is left alone.
+- After a full stop, correct only if the correction ends the clause: "3 PM. Actually 4 PM?" is corrected; "Friday.
+  Actually, tomorrow I'm busy" is not.
+- Only weekday names are capitalized.
+
+**Emails, multi-line fields, dictation starting the text.**
+
+- The greeting ("Hi / Hello / Hey / Dear / Good morning…" plus up to 3 name words and `,!:`) goes on its own line,
+  then a blank line and the body.
+- The sign-off at the end ("Thanks / Thank you / Best regards / Cheers…", optionally followed by a capitalised name)
+  goes on its own line, with the name under it ("Thanks,\nBen").
+- In email apps (Gmail, Outlook, Proton, Spark…) a greeting or a sign-off alone is enough. Elsewhere it needs both a
+  greeting and a signed name, so chat messages aren't turned into emails.
+
+**Lists, multi-line fields.**
+
+- "bullet point … next bullet …" (never "bite the bullet", "bullet train" or "bullet-proof") → "- Item."
+- "first … second … third …" at clause starts → "1. Item."
+- A list heading followed by items: "Things to do today: order groceries, go on a walk and call mom" → heading line and
+  "- Item." lines.
+  - The heading starts with a cue: to-do, things to…, shopping, groceries, checklist, agenda, action items, tasks,
+    reminders, list, steps, ingredients, packing.
+  - The heading has no "is/was/were…".
+  - It needs 2+ items after a colon, otherwise 3+. Each item has at most 12 words.
+  - A final "X and Y" is split only when both sides have 2+ words, so "bread and butter" stays one item.
+- A laid-out list or email starts on a new line if the cursor isn't at the start. A spoken "new line" alone doesn't
+  trigger this.
+
+### 3.4 "Words I use often", personal dictionary, profession
+
+- **Words I use often** (one per line, up to 40 entries): exact matches take your spelling ("git hub co-pilot" →
+  "GitHub Copilot"). Near misses are corrected only within strict limits:
+  - only for entries of 8+ letters;
+  - at most 1 edit per 5 letters, and the first letter must match;
+  - never changing a number ("Windows 10" stays with "Windows 11" listed);
+  - never adding or dropping an ending ("Chromebooks", "Priyanka's");
+  - never across punctuation.
+- **Personal dictionary:** "what it hears = what to type", for words it mishears completely (`journals = genres`).
+- **"What do you do?"** (optional, first-run guide or Settings): adds that field's names and acronyms to the word list.
+  It stays on the device. It's the likely reason Wispr asks for your profession, and here it's done with nothing sent
+  anywhere.
+  - The lists hold proper nouns, brands and acronyms only (GitHub, Kubernetes, JSON; Salesforce; MRI, ECG…).
+  - No ordinary words that are also names ("Notion", "Excel"), and no ordinary 8+ letter words ("escalation"). A test
+    enforces this.
+
+### 3.5 Works with any keyboard ("the bubble")
+
+Most people won't give up their keyboard. ThumbFree must let them dictate without switching keyboards.
+
+| Platform | How |
 |---|---|
-| Push-to-talk | Hold a key and speak; release to insert. Windows: Ctrl+Win. Mac: Fn/Globe (configurable). Android: mic key on the ThumbFree keyboard. |
-| Hands-free | Toggle on, speak at length, toggle off to insert. Esc / swipe-down cancels. |
-| Live preview | Words appear while you speak. Windows/Mac: status pill. Android: keyboard panel. |
-| Clean text | Removes filler words in English and Hinglish ("um", "basically", "thik hai na", "Haan to like…", repeated phrases). Spoken punctuation ("comma", "new line"). Inline "scratch that". Personal dictionary ("git hub = GitHub"). Snippets. |
-| Languages | English (small.en). Hindi + English fast (Swift). Hindi + English accurate (Apex), where the device can run it. |
-| Vocabulary hint | "Words I use often" helps the accurate model spell names and jargon. |
-| Paste last | Re-insert the last dictation (Windows Alt+Shift+Z, Mac ⌥⇧Z, Android long-press mic). |
-| Settings window | All settings in a UI, not JSON. Microphone choice. Model downloads with progress. |
-| History (opt-in, off by default) | The last 50 dictations, kept on the device only, so text that failed to insert can be recovered. |
-| Privacy | Speech never leaves the device. Logs record timings only, never words. No accounts, no analytics. |
+| Android (done) | An accessibility service shows a floating mic (`TYPE_ACCESSIBILITY_OVERLAY`, not focusable) when a text box in another app has focus and a keyboard is up. Tap to talk and tap to finish. Drag to move; it snaps to an edge and remembers its place. Long-press hides it until the next text box. Recording runs in a short-lived foreground service of type microphone. Text goes in with `ACTION_SET_TEXT`, else clipboard plus `ACTION_PASTE` (the clip is marked sensitive). |
+| iPhone | No floating overlays on iOS. The ThumbFree keyboard is the way in. Extras: a Shortcut / Action Button "Dictate with ThumbFree" that copies the text, and a share-sheet or Control Center control later. See 4.2. |
+| Mac | The hotkey is the main way. Optionally, a small floating mic next to the focused text field (position from `kAXBoundsForRangeParameterizedAttribute`), shown only while a text field has focus. |
+| Windows | The hotkey plus the existing pill; an optional floating mic near the caret (UI Automation) later. |
 
-**Left out on purpose** (these stay in Voice Assistant): the wake word, voice commands ("open Chrome", "send"),
-clicking by name, tabs, spoken editing ("delete the last two words"), and the idea board.
+The disclosure text, shown before the OS permission screen, is the same everywhere: *"Used only to find the text box
+you're typing in and type your dictation there. ThumbFree doesn't read, keep or send anything else on your screen."*
 
-## 3. Starting point (what already exists)
+### 3.6 Never speak into the void, never lose a dictation
 
-`shivam098/windows-dictation` (Voice Dictation 0.3.0) is already about 70% of ThumbFree for Windows:
+- **Microphone cut off:** exact digital silence (all-zero samples) for more than 1 s at the start, or 3 s later on,
+  means the OS cut the app off the microphone (a call, or another app). Real rooms are never exactly silent. Show a
+  warning in the UI and post a high-priority notification. Clear both when sound returns.
+- **Recording stopped by the system:** write what was said so far, and say so.
+- **Text box gone before the text was ready:** never type it anywhere else (not even into whatever has focus now). Keep
+  it in a notification with *Tap to copy*. The notification hides the text on the lock screen.
+- **The app didn't accept the text:** same notification.
+- **10-minute cap per dictation:** at the limit, the text is written automatically.
 
-| Piece | Status | Lines |
-|---|---|---|
-| `VoiceDictation.Core`: formatter (fillers, punctuation, scratch that, replacements, snippets), inserter, live preview, speech segments | Done, platform-neutral, 77 tests | ~720 |
-| `VoiceDictation.Speech`: Whisper + Silero wrappers, WAV | Done, platform-neutral | ~230 |
-| Windows app: Ctrl+Win hook, clipboard paste with history/cloud exclusion, mic capture, pill, tray, model downloader with SHA-256 checks, self-test lab | Done | ~2,600 |
-| App window and Settings page | Missing (Voice Assistant has them: port HomePage/SettingsPage/Theme/Motion) | |
-| macOS, Android | Not started. Mapping in Voice Assistant `docs/specs/platform-porting.md` | |
+### 3.7 First-run guide
 
-Models are already published with pinned SHA-256s: small.en q8 (252 MB), Hinglish Swift q8 (78 MB) and Hinglish Apex
-q8 (834 MB, release `models-hinglish-apex-1`).
+A full-screen, skippable guide with a progress bar. Back goes to the previous step. "Show the guide again" is in
+Settings. Steps:
 
-## 4. Architecture
+1. **Welcome:** the offline pitch (no cloud, works offline, writes like you meant to, English + Hinglish).
+2. **Microphone** permission, with what it's used for.
+3. **Speech model:** pick English or Hindi + English and download (size shown, Wi-Fi recommended). You can carry on
+   while it downloads.
+4. **Keyboard:** enable it and switch to it, with live ticks as each step is done.
+5. **Practice an email:** say the "Hey Tim… 3 pm… actually 4 pm… Thanks, Ben" sentence into a box that asks for email
+   layout, and see it formatted.
+6. **Practice a list:** "Things to do today…".
+7. **Bubble / any-keyboard access** (platform-specific), with the disclosure. Optional.
+8. **Notifications:** "Don't speak into the void". Optional.
+9. **What do you do?** Optional.
+10. **Your data:** "Keep everything private 🔒" (default) or "Help improve ThumbFree" (3.8).
 
-**Recommendation: one shared C# core, one native-feeling .NET app per platform.**
+### 3.8 Data: opt-in, local, shared only by you
+
+- Off by default.
+- When on, each keyboard dictation keeps a 16 kHz WAV, the recognised text, the typed text, the model and the app
+  version, in app-private storage. The limit is 300 samples or 150 MB, oldest deleted first.
+- **Never from password or incognito fields.** On Android the bubble doesn't save samples at all, because another
+  app's field can't say whether it's incognito. Use the same rule on any platform where privacy is unknown.
+- **Share** makes a zip and opens the system share sheet (email, Drive…). **Delete all** removes everything. There is
+  no upload code.
+- A server upload would need a backend and a privacy policy. Decide that before adding it, and keep it opt-in.
+
+### 3.9 Keyboard UI (Android reference)
+
+- Big round mic. Hold to talk; a quick tap for hands-free; slide up to cancel. The ring pulses with your voice.
+- Status line with the live preview. Keys: switch keyboard (long-press for the list), EN / HI+EN, insert the last
+  dictation again, space, delete (repeats), enter (follows the field's action: send, search, done…).
+- Settings button. Idle text: "Hold the mic and speak · offline".
+
+## 4. Platform designs
+
+### 4.1 Android (built: v0.4.0)
+
+Native Kotlin. sherpa-onnx (Parakeet) and whisper.cpp (two CPU builds: ARMv8.0 and ARMv8.2) through JNI. Views are
+built in code, with no UI libraries. APK: 27.6 MB.
+
+- Pieces: voice keyboard (IME), bubble (accessibility service + microphone foreground service), first-run guide,
+  Settings, a shared `Dictation` controller, notifications, opt-in samples.
+- Details and build steps: [android.md](android.md).
+- Next: real-phone testing of the bubble and the notifications. Then a Play internal test, which needs the
+  accessibility declaration form, the Data safety form ("no data collected", since samples never leave the device
+  unless the user shares them) and a privacy policy page.
+
+### 4.2 iPhone (new)
+
+iOS doesn't allow a custom keyboard to use the microphone, and has no floating overlays. So the iPhone app is **an app
+plus a keyboard extension that work together**, the same way Wispr Flow does it on iPhone.
+
+- **Shape:**
+  - The **ThumbFree app** owns the microphone, the models and the speech engines.
+  - The **ThumbFree keyboard** (extension) shows the mic button, live preview and the same keys as Android (3.9), and
+    inserts text with `textDocumentProxy.insertText`.
+  - Both share an **App Group** container for settings and results. The keyboard needs **Full Access** for that; the
+    disclosure says why: no network access.
+- **Starting a session:**
+  - The first time (or after the session has ended), the keyboard's **Start** button opens the app.
+  - The app starts an `AVAudioSession` with the background-audio mode, so recording can start later from the keyboard.
+    It then asks the user to swipe back (iOS shows "◀ back to app" at the top left).
+  - After that, the keyboard's mic starts and stops recording with no app switch: the keyboard signals the app through
+    the App Group (plus a Darwin notification), and the app records, transcribes and writes the result back.
+  - The orange microphone dot is visible while the session is open.
+  - The session ends after a few idle minutes to save battery (configurable, e.g. 5 minutes). It ends immediately when
+    the user taps "End session".
+- **Models and speed:**
+  - Models and engines run **in the app, never in the keyboard**. Keyboard extensions have a tight memory limit (tens of
+    MB).
+  - English: Parakeet via sherpa-onnx (it has iOS builds). Evaluate a Core ML / Neural Engine build in the spike.
+  - Hinglish: whisper.cpp with Metal / Core ML.
+- **Field info:**
+  - `documentContextBeforeInput` → continue the sentence and "at start".
+  - `keyboardType` / `returnKeyType` / `textContentType` → single-line, search and email (`.emailAddress`, plus mail
+    apps).
+  - Secure text fields automatically switch to the system keyboard. Never record there.
+- **Bubble substitute:** Shortcuts / Action Button action "Dictate with ThumbFree" (runs in the app, copies the result,
+  can type into a Shortcuts text step). Later, a Control Center control (iOS 18+).
+- **Notifications:** local notifications for "can't hear you" and "tap to copy" (3.6).
+- **Data sharing:** `UIActivityViewController`.
+- **First-run guide** (3.7), with these iPhone steps: add the keyboard (Settings › General › Keyboard › Keyboards › Add
+  New Keyboard › ThumbFree), turn on Allow Full Access (explain why), then a first session.
+- **App Review:**
+  - Guideline 4.4.1: keyboards must provide typing input and a way to switch to the next keyboard, and must remain
+    functional without Full Access. So include a basic letters layout, and a clear "Allow Full Access to dictate"
+    state.
+  - Honest microphone and background-audio usage strings.
+  - Privacy "nutrition label": data not collected.
+- **Build and test:**
+  - Xcode project in `apple/`.
+  - GitHub `macos-latest` runners build it and run unit tests and vectors on the iOS Simulator.
+  - The microphone, the session handoff and the keyboard need a **real iPhone** and TestFlight.
+
+### 4.3 Mac (new)
+
+- **Shape:**
+  - A menu-bar app (`LSUIElement`) plus a settings window.
+  - The status pill is a non-activating, click-through `NSPanel` showing the live preview and the warnings (3.6).
+- **Hotkey:** hold Fn/Globe via a `CGEventTap` on `flagsChanged` (needs **Input Monitoring**). Alternatives: Right
+  Option or a custom chord. Fn may need "Press 🌐 key to: Do Nothing"; the guide explains it. A tap of the hotkey gives
+  hands-free; Esc cancels.
+- **Optional floating mic** next to the focused text field (3.5).
+- **Audio:** `AVAudioEngine` at 16 kHz mono, plus the Microphone permission.
+- **Insertion:**
+  - Check that the focused element is still the one from the start of the dictation (`AXUIElement` equality). If not,
+    use the "tap to copy" notification (3.6).
+  - Then save the pasteboard, write the text marked `org.nspasteboard.TransientType` / `ConcealedType`, send ⌘V with
+    `CGEvent` (needs **Accessibility**), and restore the pasteboard.
+  - Fallback: `kAXSelectedTextAttribute`.
+- **Field info:**
+  - The AX role and attributes give single-line vs multi-line and the text before the cursor (`kAXValueAttribute` +
+    `kAXSelectedTextRangeAttribute`).
+  - Email layout in Mail, Outlook and Spark, and for Gmail in the browser (from the window title or URL when
+    available).
+- **Safety:** refuse when `IsSecureEventInputEnabled()` or the element is an `AXSecureTextField`.
+- **Speed:** Parakeet via sherpa-onnx (macOS builds) and whisper.cpp with Metal / Core ML. Target on Apple Silicon:
+  under 0.3 s per phrase in English; Apex usable.
+- **Notifications:** `UNUserNotificationCenter`. **Sharing:** `NSSharingServicePicker`.
+- **First-run guide** (3.7), with these Mac steps: Microphone, Input Monitoring, Accessibility, then press the hotkey to
+  test it.
+- **Distribution:**
+  - Developer ID signing and notarization (Apple Developer Program; one US$99/year account covers iPhone and Mac).
+  - A `.dmg` on GitHub Releases, then a Homebrew cask.
+  - Not the Mac App Store: its sandbox blocks global event taps and pasting into other apps.
+
+### 4.4 Windows (from Voice Dictation 0.3)
+
+- Keep: Ctrl+Win hold, Ctrl+Win+Space hands-free, Esc cancel, Alt+Shift+H language, Alt+Shift+Z paste last. Clipboard
+  paste with restore and history/cloud exclusion. Refuse password fields and elevated windows.
+- Add from 3:
+  - Parakeet for English (sherpa-onnx has Windows x64 and ARM64 builds; measured 17 s of speech in 0.4 s on a
+    Snapdragon X CPU).
+  - Smart formatting.
+  - The word-list near-miss fix.
+  - "Never lose a dictation" toasts.
+  - The first-run guide.
+  - Opt-in samples.
+- Also add: the app window (Home, Settings, History, Help) from Voice Assistant 0.9.
+- Distribution: zips on GitHub Releases, then winget. Code signing optional.
+
+## 5. Architecture: one behaviour, native apps, shared test data
+
+**Decision (Nov 2026): native apps per platform.**
+
+- A keyboard has to open instantly and stay small, which rules out shipping a .NET runtime on phones.
+- Behaviour is kept identical by **shared test vectors**, not shared binaries:
+  - `formatter.tsv`, generated from the C# reference formatter;
+  - `layout.tsv`, emails, lists and corrections.
+- Every port runs both on the real device in CI.
+
+| Platform | App | Core logic | Speech |
+|---|---|---|---|
+| Android | Kotlin | `android/core` (Kotlin, JVM-testable) | sherpa-onnx AAR + whisper.cpp via JNI |
+| iPhone + Mac | Swift / SwiftUI + AppKit | **Recommended: reuse `android/core` through Kotlin Multiplatform** as an XCFramework (one source for Android, iPhone and Mac). Fallback: a Swift port held to the same vectors. | sherpa-onnx xcframework + whisper.cpp (Metal / Core ML) |
+| Windows | C# / WPF | `VoiceDictation.Core` (the C# reference) | Whisper.net today; add sherpa-onnx (C# API) for Parakeet |
+
+**Kotlin Multiplatform for Apple** means one fix to the filler or layout rules reaches Android, iPhone and Mac at once.
+
+- The core is already pure Kotlin with no Android calls, so it's a good fit.
+- Risk: the Kotlin/Native regex engine differs from Java's and Android's. That's exactly what the vectors catch: run
+  them on the iOS Simulator in CI.
+- If the spike shows problems (framework size, regex gaps), port to Swift instead.
+
+Repo layout:
 
 ```
 thumbfree/
-  src/ThumbFree.Core/        net10.0   formatter, fillers, punctuation, dictionary, snippets, segmenter,
-                                       preview scheduling, settings model, history store (no OS calls)
-  src/ThumbFree.Speech/      net10.0   Whisper.net + Silero, model catalog, downloader, SHA-256 checks
-  apps/windows/              net10.0-windows   WPF: hook, paste, pill, tray, window
-  apps/macos/                net10.0-macos     AppKit: menu bar, CGEventTap, paste, NSPanel pill, window
-  apps/android/              net10.0-android   InputMethodService (voice keyboard) + settings activity
-  tests/ThumbFree.Core.Tests/                  xUnit; runs on Windows, macOS, Linux CI
-  tests/vectors/*.json                         the same cases as data (input → expected text)
-  tests/labs/                                  real-app labs per platform (DictationLab, etc.)
-  docs/specs/                                  product, dictation, platforms, privacy, acceptance tests
-  .github/workflows/                           ci.yml (matrix), release.yml, publish-model.yml
+  android/            Kotlin: core/, whisper/, whisper-v82/, app/   (built)
+  apple/              ThumbFree.xcodeproj: iOS app + keyboard extension, macOS menu-bar app, shared Swift package
+  windows/            later: moved from shivam098/windows-dictation
+  tests/vectors/      formatter.tsv, layout.tsv   (all platforms, on device)
+  tests/audio/        speech clips for on-device engine tests
+  third_party/        whisper.cpp (submodule)
+  docs/               PLAN.md, android.md, apple.md (to write)
 ```
-
-**Why:** the hardest-won logic is the formatter and the Hinglish filler rules, which change often. One implementation
-with one test suite means a fix reaches all three apps at once. Whisper.net (already in use) supports Windows, macOS
-(Metal/Core ML) and Android, and .NET can build an Android keyboard and a macOS menu-bar app.
-
-**Fallback:** native Kotlin (Android) or Swift (Mac), calling whisper.cpp directly, with the core ported and checked
-against `tests/vectors/*.json`. Use it only if a week-1 spike fails, for example if the .NET keyboard is too large or too
-slow to open.
-
-> **Decision for Android (Nov 2026): native Kotlin + whisper.cpp through JNI.** A keyboard must open instantly and stay
-> small, so the Android app skips the .NET runtime. The core (formatter, filler rules, segmentation, live preview) is
-> ported to Kotlin in `android/core` and must match the C# reference on every row of `tests/vectors/formatter.tsv`, both
-> on the JVM and on a device (Android's ICU regex engine). See [android.md](android.md).
-
-| | Shared .NET (recommended) | Native Swift + Kotlin |
-|---|---|---|
-| Core logic | Written once, 77+ tests reused | Written 3 times; vectors keep them in step |
-| App size | Android +15–25 MB runtime (trimmed) | Smallest |
-| OS integration | Full through bindings, with some P/Invoke on Mac | Most natural, best docs and samples |
-| Speed to ship | Fastest: Windows is mostly done | Slowest |
-
-## 5. Platform designs
-
-### Windows (from Voice Dictation)
-
-- Keep: Ctrl+Win hold, Ctrl+Win+Space hands-free, Esc cancel, Alt+Shift+H language, Alt+Shift+Z paste last.
-- Add: an app window (Home, Settings, History, Help), ported from Voice Assistant 0.9. Also smooth UI, first-run
-  onboarding (microphone check and model download) and start-at-sign-in (tray only).
-- Insertion: clipboard paste with restore and history/cloud exclusion (done). Refuse password fields and elevated
-  windows (done).
-- Distribution: zip (x64/ARM64) on GitHub Releases, then **winget**. Optional later: MSIX and a code-signing
-  certificate, so SmartScreen stops warning.
-
-### macOS (new)
-
-- **Shape:** a menu-bar app (`LSUIElement`). The status pill is a non-activating, click-through `NSPanel`. The settings
-  window is AppKit.
-- **Hotkey:** hold Fn/Globe via a `CGEventTap` on `flagsChanged`, which needs **Input Monitoring** permission.
-  Alternatives in Settings: Right Option, or a custom chord. Fn may need "Press 🌐 key to: Do Nothing" in System
-  Settings; onboarding explains this.
-- **Audio:** `AVAudioEngine` at 16 kHz mono, plus the **Microphone** permission (`NSMicrophoneUsageDescription`).
-- **Insertion:**
-  - Normally: save the pasteboard, write the text marked `org.nspasteboard.TransientType` and `ConcealedType`, send
-    ⌘V with `CGEvent` (needs **Accessibility** permission), then restore the pasteboard.
-  - Fallback: `AXUIElementSetAttributeValue` on the focused element's `kAXSelectedTextAttribute`.
-- **Safety:** refuse when `IsSecureEventInputEnabled()` is on or the focused element is an `AXSecureTextField`
-  (password fields).
-- **Speed:** Whisper.net with Metal/Core ML. Target on Apple Silicon: under 0.4 s per phrase with small.en; Apex usable.
-- **Distribution:**
-  - Developer ID signing plus **notarization**. Needs an Apple Developer account, US$99 a year. Without it, users must
-    right-click › Open past Gatekeeper; acceptable for early testers only.
-  - A `.dmg` on GitHub Releases, then a **Homebrew cask**. The Mac App Store is not an option: its sandbox doesn't allow
-    global event taps and pasting into other apps.
-- **Build and test:**
-  - GitHub `macos-latest` runners build the app.
-  - Microphone, permissions and pasting need a **real Mac**.
-
-### Android (new)
-
-- **Shape:** a **voice keyboard (IME)**, the cleanest and Play-policy-safe way to put text into any app. The user
-  switches to ThumbFree, or taps its mic from the keyboard switcher, then holds the big mic key and speaks. On release
-  the text is committed with `commitText`, and it switches back to the previous keyboard automatically
-  (`switchToPreviousInputMethod`), like Google voice typing.
-- **Not planned:**
-  - An accessibility service: Play restricts it to accessibility uses.
-  - A floating bubble: needs the overlay permission and is awkward to use.
-- **Audio:** `AudioRecord` at 16 kHz with **RECORD_AUDIO**, granted once in the companion settings activity. Recording
-  happens only while the key is held, so there is no foreground service and no background microphone use.
-- **Keyboard panel:** live preview, a language toggle (EN / HI+EN), backspace, enter, a "paste last" chip, and a
-  "switch keyboard" key.
-- **Models:**
-  - Default English: base.en q8 (78 MB, already published and pinned).
-  - Hinglish: Swift (78 MB).
-  - small.en offered only on devices with 6 GB RAM or more.
-  - Apex not offered on phones.
-  - Downloads over Wi-Fi by default, with SHA-256 checks.
-- **Targets:**
-  - Mid-range phone (Snapdragon 7-series): about 1.5 s for a 5 s phrase with base.en.
-  - Live preview with tiny.en or base.en every ~1 s.
-  - Battery: zero cost when not dictating.
-- **Safety:** refuse in password fields (the field's `EditorInfo.inputType` variation is `TYPE_TEXT_VARIATION_PASSWORD`,
-  `TYPE_TEXT_VARIATION_VISIBLE_PASSWORD`, `TYPE_TEXT_VARIATION_WEB_PASSWORD` or `TYPE_NUMBER_VARIATION_PASSWORD`). Never
-  learn from fields flagged `IME_FLAG_NO_PERSONALIZED_LEARNING` (incognito).
-- **Distribution:**
-  - First: signed APK on GitHub Releases.
-  - Then: **Google Play**. Needs a US$25 one-time developer account, a privacy policy page, and a Data safety form
-    ("no data collected").
-  - F-Droid is possible later.
 
 ## 6. Phases
 
-Rough effort for one developer with Copilot. Each phase ends with something usable and released.
-
 | Phase | Goal | Done when |
 |---|---|---|
-| **0. Repo and spikes** (week 1) | Create `shivam098/thumbfree` with Voice Dictation's history, rename namespaces to ThumbFree, set up CI. Two throw-away spikes: (a) a .NET Android IME that records 3 s, runs base.en and commits text on a real phone; (b) a .NET macOS menu-bar app where Fn-hold records and ⌘V pastes. | CI green on Windows, macOS and Linux. Both spikes work on a real device, or the fallback (native) is chosen for that platform. |
-| **1. Shared core** (week 2) | Move platform-neutral code into `ThumbFree.Core`/`Speech` (model catalog, downloader, settings model, opt-in history store). Export `tests/vectors/*.json` from the existing tests. | Core tests pass on all three CI runners. |
-| **2. Windows 1.0** (weeks 2–3) | Parity with Voice Dictation 0.3, plus the app window, Settings, History, onboarding and smooth UI. Archive `windows-dictation` with a pointer to ThumbFree; existing users keep their settings (migrated from `%APPDATA%\VoiceDictation\settings.json`; models reused from `%LOCALAPPDATA%\VoiceDictation\models`). | Real-app labs pass (Notepad, Chrome, Teams, VS Code, terminal). Release `v1.0.0-windows`, zips plus winget. |
-| **3. macOS 0.x → 1.0** (weeks 3–6) | Menu-bar app, hotkey, audio, paste, pill, live preview, Settings, onboarding for the three permissions, Metal. | Acceptance tests on a real Mac (Notes, Safari, Chrome, Slack, VS Code, Terminal). Notarized `.dmg`, then a Homebrew cask. |
-| **4. Android 0.x → 1.0** (weeks 5–8) | Voice keyboard, settings activity, model manager, per-device model choice. | Acceptance tests on 2 phones (one mid-range): WhatsApp, Gmail, Chrome, Notes. APK on GitHub, then a Play internal test, then production. |
-| **5. Polish** (ongoing) | Learn from corrections (add to the dictionary), more Hinglish rules, auto language pick (measured signal: English text from small.en and Swift agree in 16 of 17 clips, Hinglish 0 of 6), optional iOS keyboard later. | |
+| **Android 0.1–0.4** ✅ | Keyboard, Parakeet + Whisper, word list, emails/lists/corrections, bubble, notifications, guide, opt-in samples | Released v0.4.0; CI: core tests, APK build, emulator tests (formatter + layout vectors, both engines, every guide screen) |
+| **Android 0.5** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then a Play internal test | Bubble works in the top 10 apps; Play listing approved |
+| **Apple spike** (week 1) | (a) The `android/core` KMP framework passing both vector files on the iOS Simulator and macOS; (b) iPhone: keyboard Start → app session → swipe back → mic in the keyboard → text inserted, on a real iPhone; (c) Parakeet 110M speed on iPhone and Mac | All three work, or the fallback (Swift port, different session design) is chosen |
+| **iPhone 0.x** (weeks 2–5) | Keyboard + app session, models, guide, notifications, Shortcuts action, opt-in samples | TestFlight with the acceptance list (Messages, WhatsApp, Mail, Notes, Safari) |
+| **Mac 0.x** (weeks 4–7) | Menu bar, hotkey, pill, paste with the same-field check, guide, optional floating mic | Notarized `.dmg`; acceptance on a real Mac (Notes, Mail, Safari, Chrome, Slack, VS Code, Terminal) |
+| **Windows 1.0** | Section 3 features on top of Voice Dictation 0.3; archive `windows-dictation` | Real-app labs pass; winget |
+| **Later** | Auto language pick (English word overlap ≥ 0.5 in 16/17 English clips, 0/6 Hinglish); learn from corrections; NPU / Neural Engine for Apex; History (opt-in) | |
 
-Version scheme: one product version across platforms (`1.0.0`), with release assets per platform. Tags
-`v1.0.0`, `v1.1.0`, and so on. A platform that isn't ready yet just doesn't attach an asset.
+One product version across platforms; release assets per platform.
 
 ## 7. Testing
 
-- **Unit:** the core suite (formatter, fillers, Hinglish rules, segmenter, preview, history) on every CI run, on all
-  three OSes. The JSON vectors make any native port prove the same behaviour.
-- **Speech benchmarks:** the existing SpeechBench and Hinglish bench, run per platform and model (latency, CPU per
-  phrase, word error). Results go in `docs/BENCHMARKS.md`.
-- **Real-app labs:**
-  - Windows: the existing DictationLab self-test.
-  - Mac: an XCUITest-free script that drives TextEdit and checks its text through AX.
-  - Android: an instrumented test with a sample app hosting an `EditText`, driving the IME's commit path with recorded
-    audio.
-- **Acceptance checklist** per platform in `docs/specs/acceptance-tests.md`:
-  - dictate, cancel, hands-free, Hinglish;
+- **Vectors on every device:** `formatter.tsv` and `layout.tsv` run in CI on the real target (Android emulator, iOS
+  Simulator, macOS, Windows). Any rule change updates the vectors first.
+- **Engine tests with recorded speech** (`tests/audio`): final pass, live preview, abort, word list, a 10 s dictation
+  through formatting. Timings are printed so regressions show.
+- **Screen smoke tests:** every guide step and Settings open without crashing.
+- **Real-device acceptance checklist** per platform:
+  - dictate, hands-free, cancel, Hinglish;
+  - email and list layout in a mail app and a notes app;
+  - "actually" corrections;
   - password refusal;
-  - clipboard restored;
+  - a call during dictation (warning + notification);
+  - the text box closing mid-dictation (tap-to-copy notification, nothing typed elsewhere);
+  - the bubble / hotkey in the top apps;
+  - offline (flight mode);
   - nothing recorded when not dictating;
-  - works offline.
+  - samples only when opted in, and never from private fields.
+- **Independent code review** of every change before release (on Android it caught 7 real bugs in v0.4, including the
+  bubble typing into the wrong app).
 
 ## 8. Privacy and safety (same rules everywhere)
 
-- The microphone is on only while dictating. No wake word and no background listening.
-- Audio and text are never uploaded and never written to disk. History is opt-in and local.
-- Logs record states and timings only.
-- Never type into password fields or secure input. On Windows, never into elevated windows.
-- The clipboard is restored after pasting and excluded from clipboard history and sync where the OS allows.
-- Models are downloaded only from pinned URLs and verified with SHA-256 before loading.
+- The microphone is on only while dictating (on iPhone, during the visible session). No wake word.
+- Speech is recognised on the device. The internet is used only to download pinned, SHA-256-checked models.
+- Audio is kept only in memory, unless the user opts in to keep samples on the device. Nothing is ever uploaded by the
+  app.
+- Never type into password / secure fields, or into a field other than the one the dictation started in.
+- Clipboard: restored after pasting where the OS allows, and marked sensitive / transient.
+- Accessibility and Full Access are used only for the one stated purpose, with the disclosure shown first.
+- Logs record states and timings only, never words.
 
 ## 9. Costs and accounts
 
 | Item | Cost | Needed for |
 |---|---|---|
-| Apple Developer Program | US$99/year | Signing and notarizing the Mac app (otherwise Gatekeeper warns) |
-| Google Play developer | US$25 once | Play Store listing |
-| Windows code signing (optional) | ~US$100–400/year (or Azure Trusted Signing, ~US$10/month) | Removing SmartScreen warnings |
-| A Mac and an Android phone for testing | — | Permissions, microphone, real-app tests |
+| Apple Developer Program | US$99/year | iPhone (TestFlight, App Store) and Mac (Developer ID, notarization): one account covers both |
+| Google Play developer | US$25 once | Play listing |
+| Windows code signing (optional) | ~US$10/month (Azure Trusted Signing) | Removing SmartScreen warnings |
+| Devices | — | A real iPhone and Mac (keyboard session, permissions); the Pixel 11 for Android |
 
 ## 10. Risks
 
 | Risk | Mitigation |
 |---|---|
-| .NET Android keyboard too large or slow to open | Week-1 spike; fallback to a Kotlin IME + whisper.cpp with the vectors |
-| Fn key capture on Mac varies by keyboard and settings | Configurable hotkey; onboarding check that shows the key was detected |
-| Phone speed for small.en / Apex | base.en + Swift by default; larger models only on capable devices |
-| Hinglish model licences | Confirm the Oriserve model licences allow redistribution before store listings (whisper.cpp and OpenAI Whisper are MIT) |
-| Store review (Play Data safety, Mac notarization) | No data collection; honest permission text; signing set up early |
-| Two products (Voice Assistant + ThumbFree) drifting apart | ThumbFree.Core becomes the source of the formatter; Voice Assistant later consumes it as a package or submodule |
+| iOS keyboard session feels clunky (app switch to start) | Long idle timeout (user choice), clear "session on" state in the keyboard, Shortcuts action as an alternative; spike on a real iPhone first |
+| App Review rejects the keyboard (4.4.1) or the background audio | Basic letters layout, next-keyboard key, honest usage strings, audio only during a visible session |
+| Kotlin/Native regex differs from Java/ICU | Vectors on the iOS Simulator in CI; Swift port as the fallback |
+| Play policy for the accessibility bubble | `isAccessibilityTool=false`, disclosure before settings, the declaration form; the keyboard works without it |
+| Bubble text insertion fails in some apps (web views, custom editors) | Paste fallback, then the tap-to-copy notification; list the top apps in acceptance tests |
+| Big models on phones (memory, heat) | Opt-in with memory warnings; no live preview; unload when idle; NPU / Neural Engine later |
+| Hinglish model licences | Confirm the Oriserve licences allow redistribution before store listings (Parakeet: CC BY 4.0 with attribution; whisper.cpp: MIT) |
+| Platforms drifting apart | Section 3 is the spec; the vectors are the contract; one release checklist |
 
 ## 11. Decisions needed from you
 
-1. **Name:** ThumbFree, or another?
-2. **Approach:** shared .NET (recommended) or native Swift/Kotlin?
-3. **Old repo:** archive `windows-dictation` and move its users to ThumbFree?
-4. **Accounts:** will you get the Apple Developer (US$99/yr) and Google Play (US$25) accounts, and do you have a Mac
-   and an Android phone to test on?
-5. **History:** keep it opt-in (off by default)?
+1. **Apple core:** reuse the Kotlin core through Kotlin Multiplatform (recommended), or port to Swift?
+2. **iPhone session timeout:** how long a dictation session stays ready after the last use (suggest 5 minutes; 15 and
+   "until I end it" as options)?
+3. **Accounts and devices:** the Apple Developer account (US$99/yr, covers iPhone and Mac), plus a real iPhone and Mac
+   to test on.
+4. **Data sharing destination:** keep "Share via the share sheet" only, or set up a server with a privacy policy for
+   opt-in uploads?
+5. **Order after the Android phone test:** iPhone first or Mac first?
