@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bubble edition: the accessibility service, and the microphone foreground service it records from. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The bubble records from a short-lived foreground service (Android's rule for apps not on screen). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <application>
+        <service
+            android:name=".BubbleService"
+            android:exported="true"
+            android:label="@string/bubble_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/bubble" />
+        </service>
+
+        <service
+            android:name=".MicService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+    </application>
+</manifest>

@@ -69,6 +69,14 @@ tests/audio/                  short speech clips for the on-device tests
 
 ## The bubble
 
+**Editions.** The bubble ships only in the `bubble` product flavor. Its manifest (`app/src/bubble/AndroidManifest.xml`)
+adds the accessibility service and the microphone foreground service. The `standard` flavor declares neither:
+Google Play Protect's enhanced fraud protection (India, since 2024) blocks installing any app that declares an
+accessibility service from an "internet sideloading source" (browser, messaging app, file manager). Apps installed from
+the Play Store or with `adb` aren't affected. `BuildConfig.HAS_BUBBLE` hides the bubble's guide step and settings in the
+standard edition. An on-device test checks that the standard APK has no accessibility service. Releases attach both
+APKs, signed with the same key.
+
 `BubbleService` is an accessibility service (declared `isAccessibilityTool=false`, with the disclosure shown before
 Android's settings page). It listens only for focus and window changes. When an editable field in another app has
 focus and a keyboard is on screen, it adds a floating mic (`TYPE_ACCESSIBILITY_OVERLAY`, not focusable, so the text

@@ -50,6 +50,14 @@ class ScreensOnDeviceTest {
     }
 
     @Test
+    fun accessibility_service_only_in_the_bubble_edition() {
+        // Play Protect blocks sideloading apps that declare one (India), so the standard APK must not.
+        val info = context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)
+        val accessibility = info.services.orEmpty().any { it.permission == "android.permission.BIND_ACCESSIBILITY_SERVICE" }
+        assertEquals(BuildConfig.HAS_BUBBLE, accessibility)
+    }
+
+    @Test
     fun settings_open_after_the_guide() {
         context.thumbFree.prefs.onboarded = true
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->

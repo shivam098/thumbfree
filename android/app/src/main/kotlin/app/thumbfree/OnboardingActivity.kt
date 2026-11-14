@@ -34,6 +34,9 @@ import app.thumbfree.core.Professions
 class OnboardingActivity : Activity() {
     private enum class Step { Welcome, Microphone, Model, Keyboard, TryEmail, TryList, Bubble, Notifications, Profession, Data }
 
+    /** The bubble step exists only in the bubble edition (see app/build.gradle.kts). */
+    private val steps = Step.entries.filter { it != Step.Bubble || BuildConfig.HAS_BUBBLE }
+
     private val app get() = thumbFree
     private val prefs get() = app.prefs
     private var step = Step.Welcome
@@ -46,7 +49,7 @@ class OnboardingActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        step = intent.getStringExtra(EXTRA_STEP)?.let { name -> Step.entries.firstOrNull { it.name == name } }
+        step = intent.getStringExtra(EXTRA_STEP)?.let { name -> steps.firstOrNull { it.name == name } }
             ?: savedInstanceState?.getString("step")?.let { Step.valueOf(it) } ?: Step.Welcome
 
         val root = LinearLayout(this).apply {
@@ -123,10 +126,11 @@ class OnboardingActivity : Activity() {
 
     @Deprecated("Back goes to the previous step")
     override fun onBackPressed() {
-        if (step.ordinal == 0) @Suppress("DEPRECATION") super.onBackPressed() else go(Step.entries[step.ordinal - 1])
+        val i = steps.indexOf(step)
+        if (i <= 0) @Suppress("DEPRECATION") super.onBackPressed() else go(steps[i - 1])
     }
 
-    private fun next() = if (step.ordinal + 1 < Step.entries.size) go(Step.entries[step.ordinal + 1]) else done()
+    private fun next() = steps.indexOf(step).let { i -> if (i + 1 < steps.size) go(steps[i + 1]) else done() }
 
     private fun go(to: Step) {
         step = to
@@ -144,9 +148,10 @@ class OnboardingActivity : Activity() {
     private fun render() {
         if (!::content.isInitialized) return
         progress.removeAllViews()
-        Step.entries.forEach { s ->
+        val at = steps.indexOf(step)
+        steps.forEachIndexed { i, _ ->
             progress.addView(
-                View(this).apply { background = rounded(color(if (s.ordinal <= step.ordinal) R.color.tf_accent else R.color.tf_track), 2f) },
+                View(this).apply { background = rounded(color(if (i <= at) R.color.tf_accent else R.color.tf_track), 2f) },
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = dpi(4) },
             )
         }
@@ -253,7 +258,10 @@ class OnboardingActivity : Activity() {
 
     private fun keyboard() {
         title("Turn on the ThumbFree keyboard")
-        line("A voice keyboard you can switch to in any app. (Prefer your usual keyboard? The bubble, a few steps on, works with any keyboard.)")
+        line(
+            "A voice keyboard you can switch to in any app." +
+                if (BuildConfig.HAS_BUBBLE) " (Prefer your usual keyboard? The bubble, a few steps on, works with any keyboard.)" else "",
+        )
         val imm = getSystemService(InputMethodManager::class.java)
         val enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
         val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD).orEmpty().startsWith("$packageName/")

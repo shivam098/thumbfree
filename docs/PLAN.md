@@ -204,6 +204,13 @@ built in code, with no UI libraries. APK: 27.6 MB.
 
 - Pieces: voice keyboard (IME), bubble (accessibility service + microphone foreground service), first-run guide,
   Settings, a shared `Dictation` controller, notifications, opt-in samples.
+- **Two editions** (Gradle flavors, same signing key):
+  - **standard**: no bubble. Installs from GitHub anywhere.
+  - **bubble**: adds the bubble.
+  - Reason: in India, Play Protect's enhanced fraud protection blocks installing, from a browser or file manager, any
+    app that declares an accessibility service. That's what happened to v0.4.0 on the Pixel 11.
+  - The bubble edition is meant for the Play Store (not affected) or `adb` installs.
+  - Any other platform feature that needs a "sensitive" permission should follow the same pattern.
 - Details and build steps: [android.md](android.md).
 - Next: real-phone testing of the bubble and the notifications. Then a Play internal test, which needs the
   accessibility declaration form, the Data safety form ("no data collected", since samples never leave the device

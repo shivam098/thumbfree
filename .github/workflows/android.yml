@@ -55,16 +55,13 @@ jobs:
       - name: Use the runner's NDK
         run: echo "ANDROID_NDK_VERSION=$(basename "$ANDROID_NDK_LATEST_HOME")" >> "$GITHUB_ENV"
       - name: Build
-        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease --console=plain
+        run: ./gradlew :app:assembleDebug :app:assembleStandardDebugAndroidTest :app:assembleBubbleDebugAndroidTest :app:assembleRelease --console=plain
       - name: Sizes
-        run: ls -l app/build/outputs/apk/*/*.apk app/build/outputs/apk/androidTest/debug/*.apk
+        run: find app/build/outputs/apk -name '*.apk' -exec ls -l {} +
       - uses: actions/upload-artifact@v4
         with:
           name: apks
-          path: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/androidTest/debug/*.apk
-            android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/
 
   device:
     name: On-device tests (emulator)

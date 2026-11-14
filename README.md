@@ -36,9 +36,15 @@ The full plan is in [docs/PLAN.md](docs/PLAN.md).
 1. Download `ThumbFree-x.y.z.apk` from [Releases](https://github.com/shivam098/thumbfree/releases) and open it. Android
    asks you to allow installs from your browser or file manager the first time.
 2. Open **ThumbFree**. A short guide walks you through the microphone, the speech model (downloads once, 137 MB for
-   English, then works offline), the keyboard, a practice email and list, and the optional bubble.
+   English, then works offline), the keyboard, and a practice email and list.
 
 Requires Android 8.0 or newer on a 64-bit phone.
+
+**Two editions.** Each release has `ThumbFree-x.y.z.apk` (everything except the bubble) and
+`ThumbFree-x.y.z-with-bubble.apk`. The bubble uses an accessibility service, and in some countries (India) Google Play
+Protect blocks installing such an app from a browser or file manager ("App blocked to protect your device"). Install
+the bubble edition with `adb install ThumbFree-x.y.z-with-bubble.apk` from a computer, or get it from the Play Store
+once it's listed. Both are signed with the same key, so you can switch without losing settings or models.
 
 ### Use
 
@@ -49,8 +55,9 @@ The keyboard:
 - **EN / HI+EN** switches language; **⌨** goes back to your usual keyboard (long-press for the list).
 - **↺** types your last dictation again.
 
-The bubble (any keyboard): it appears beside your keyboard whenever you type. **Tap** it, talk, **tap** again. Drag
-it to move it; long-press to hide it until the next text box. Turn it on in the guide or in Settings.
+The bubble (any keyboard, bubble edition): it appears beside your keyboard whenever you type. **Tap** it, talk,
+**tap** again. Drag it to move it; long-press to hide it until the next text box. Turn it on in the guide or in
+Settings.
 
 ### Privacy
 
