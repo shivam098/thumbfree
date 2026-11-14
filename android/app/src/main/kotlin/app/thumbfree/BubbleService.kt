@@ -310,7 +310,8 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
     override fun onTranscript(result: Dictation.Transcript?) {
         MicService.stop(this)
         mic.recording = false
-        val node = target?.takeIf { it.refresh() } ?: focusedField()
+        // Only the text box the dictation was started in: never whatever has focus now.
+        val node = target?.takeIf { it.refresh() }
         target = null
         when {
             result == null -> say("Couldn't turn that into text. Please try again.", 3500)
@@ -341,8 +342,8 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
         val spaced = Insertion.withSpacing(before, text)
 
         if (setText(node, existing, start, end, spaced) || paste(node, spaced)) {
+            // No samples from the bubble: another app's field can't say whether it's incognito.
             say(text, 2500)
-            if (app.prefs.shareSamples) app.samples.save(result, text, app.prefs.language.name)
         } else {
             app.notifier.undelivered(text, "This app didn't accept the text.")
             say("This app didn't accept the text. It's in your notifications.", 4000)

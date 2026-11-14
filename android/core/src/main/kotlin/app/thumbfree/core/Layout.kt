@@ -63,7 +63,11 @@ object Layout {
 
     // ---- lists ----
 
-    private val BulletRegex = Regex("""[,.;:]?\s*(?<![\p{L}])(?i:(?:new |next |another )?bullet(?: point)?)(?![\p{L}])[,.;:]?\s*""")
+    // Only unambiguous commands: "bullet point …", "new/next bullet …", or "bullet …" opening the text. Never "bite the
+    // bullet", "bullet train" or "bullet-proof".
+    private val BulletRegex = Regex(
+        """(?:[,.;:]?\s*(?<![\p{L}])(?i:(?:new |next |another )?bullet point|(?:new|next|another) bullet)|^(?i:bullet))(?![\p{L}-])[,.;:]?\s*""",
+    )
 
     private val OrdinalRegex = Regex(
         """(?:^|(?<=[.,;:!?])\s*(?:(?i:and)\s+)?|\s+(?i:and)\s+)(?<![\p{L}])((?i:first(?:ly)?|second(?:ly)?|third(?:ly)?|fourth|fifth|sixth|seventh|eighth|ninth|tenth|finally|lastly))(?![\p{L}])(?:\s*[,:])?\s+""",
@@ -86,7 +90,7 @@ object Layout {
         val parts = BulletRegex.split(text)
         if (parts.size < 2) return null
         val items = parts.drop(1).map { item(it) }.filter { it.isNotEmpty() }
-        if (items.isEmpty()) return null
+        if (items.size < 2) return null
         return render(header(parts[0]), items.map { "- $it" })
     }
 
@@ -165,34 +169,46 @@ object Layout {
  * (and a bare number into a time), where a spoken correction is unambiguous.
  */
 object SelfCorrection {
-    private const val DAY = "monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight"
+    private const val WEEKDAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    private const val DAY = "$WEEKDAYS|today|tomorrow|tonight"
     private const val TIME = """\d{1,2}(?::\d{2})?(?:\s?(?:[aApP]\.?\s?[mM](?![\p{L}])\.?|o'clock))?"""
     private val ValueRegex = """(?i:$DAY)|$TIME"""
 
+    // Never inside a decimal ("2.5, actually 3"): no digit-and-point just before or after a value.
     private val CorrectionRegex = Regex(
-        """(?<![\p{L}\p{Nd}:])($ValueRegex)(\s*(?:\.\.\.|…|[,.;!?—–-])?\s*)(?i:actually|sorry|I mean|no wait|or rather|make (?:it|that))(?:\s*[,.]|\s*\.\.\.|\s*…)?\s+(?:(?i:at|on|by)\s+)?($ValueRegex)(?![\p{L}\p{Nd}])""",
+        """(?<![\p{L}\p{Nd}:])(?<!\p{Nd}[.,])($ValueRegex)(\s*(?:\.\.\.|…|[,.;!?—–-])?\s*)((?i:actually|sorry|I mean|no wait|or rather|make (?:it|that)))(?:\s*[,.]|\s*\.\.\.|\s*…)?\s+(?:(?i:at|on|by)\s+)?($ValueRegex)(?![\p{L}\p{Nd}]|[.,]\p{Nd})""",
     )
     private val MeridiemRegex = Regex("""\s?(?:[ap]\.?\s?m\.?|o'clock)$""", RegexOption.IGNORE_CASE)
+    private val ClauseEndRegex = Regex("""^\s*(?:[.,!?;:]|$)""")
     private val Days = DAY.split('|').toSet()
+    private val Weekdays = WEEKDAYS.split('|').toSet()
 
     fun apply(text: String): String = CorrectionRegex.replace(text) { m ->
         val first = m.groupValues[1]
         val separator = m.groupValues[2]
-        val second = m.groupValues[3]
-        replacement(first, second, separator) ?: m.value
+        val marker = m.groupValues[3]
+        val second = m.groupValues[4]
+        // "Friday. Actually, tomorrow I'm busy" starts a new thought; "3 PM. Actually 4 PM?" only corrects the time.
+        val newSentence = (separator.any { it in ".!?" } && "..." !in separator && '…' !in separator) ||
+            (first.endsWith('.') && marker[0].isUpperCase())
+        if (newSentence && !ClauseEndRegex.containsMatchIn(text.substring(m.range.last + 1))) {
+            m.value
+        } else {
+            replacement(first, second, newSentence) ?: m.value
+        }
     }
 
-    private fun replacement(first: String, second: String, separator: String): String? {
+    private fun replacement(first: String, second: String, newSentence: Boolean): String? {
         val a = kind(first)
         val b = kind(second)
         return when {
-            a == Kind.Day && b == Kind.Day -> second.replaceFirstChar { it.uppercaseChar() }
+            a == Kind.Day && b == Kind.Day -> if (second.lowercase() in Weekdays) second.replaceFirstChar { it.uppercaseChar() } else second.lowercase()
             a == Kind.Time && b == Kind.Time -> second
             a == Kind.Number && b == Kind.Time -> second
             // "3 pm, actually 4" → "4 pm"
             a == Kind.Time && b == Kind.Number && MeridiemRegex.containsMatchIn(first) -> second + MeridiemRegex.find(first)!!.value
-            // "2, actually 3" only within a sentence ("Chapter 2. Actually 3 people…" is not a correction).
-            a == Kind.Number && b == Kind.Number && separator.none { it in ".!?" } -> second
+            // "2, actually 3" only within a sentence ("Chapter 2. Actually 3." is not a correction).
+            a == Kind.Number && b == Kind.Number && !newSentence -> second
             else -> null
         }
     }

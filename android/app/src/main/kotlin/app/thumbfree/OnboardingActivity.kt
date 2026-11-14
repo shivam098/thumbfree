@@ -357,7 +357,8 @@ class OnboardingActivity : Activity() {
             choiceCard(
                 "Help improve ThumbFree",
                 "Keep my recordings, transcripts and the typed text on this phone so I can choose to send them to the " +
-                    "ThumbFree team. Nothing is sent automatically, and you can delete them anytime in Settings.",
+                    "ThumbFree team. Only dictations made with the ThumbFree keyboard, never from password or incognito " +
+                    "fields. Nothing is sent automatically, and you can delete them anytime in Settings.",
                 prefs.shareSamples,
             ) {
                 prefs.shareSamples = true

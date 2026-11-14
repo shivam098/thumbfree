@@ -22,7 +22,7 @@ import org.json.JSONObject
 
 /**
  * "Help improve ThumbFree" (off unless you turn it on). Each dictation's audio, the raw transcript and the text that
- * was typed are kept in the app's private storage, never uploaded. You decide if and where to send them: "Share" makes
+ * was typed are kept in the app's private storage, never uploaded. Keyboard dictations only: the bubble can't tell whether another app's field is incognito. You decide if and where to send them: "Share" makes
  * a zip and opens Android's share sheet. Never kept for password or incognito fields.
  */
 class SampleStore(private val context: Context) {

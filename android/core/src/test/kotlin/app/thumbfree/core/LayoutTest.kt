@@ -27,6 +27,13 @@ class LayoutTest {
         assertEquals("genres", Professions.addTo("genres", "Other"))
         val twice = Professions.addTo(Professions.addTo("", "Sales"), "Sales")
         assertEquals(Professions.addTo("", "Sales"), twice)
+
+        // Long all-lowercase entries are reachable from ordinary words by the near-miss correction.
+        val jargon = setOf("ibuprofen", "paracetamol", "amoxicillin", "affidavit", "indemnity", "plaintiff", "defendant", "syllabus", "go-to-market", "pull request", "term sheet")
+        for ((role, words) in Professions.all) for (w in words) {
+            val letters = w.count { it.isLetterOrDigit() }
+            if (letters >= 8 && w.none { it.isUpperCase() }) kotlin.test.assertTrue(w in jargon, "$role: \"$w\" could rewrite ordinary words")
+        }
     }
 }
 

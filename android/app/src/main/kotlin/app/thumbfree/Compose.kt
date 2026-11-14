@@ -26,9 +26,13 @@ object Compose {
         if (text.isEmpty()) return ""
         if (prefs.smartFormatting && !field.search) {
             val atStart = before.isNullOrBlank()
-            text = Layout.apply(text, LayoutContext(field.multiLine, atStart, email))
-            // A list or an email starts on its own line.
-            if (text.contains('\n') && !atStart && before?.lastOrNull() != '\n') text = "\n" + text
+            val laid = Layout.apply(text, LayoutContext(field.multiLine, atStart, email))
+            // A list or an email laid out by Layout starts on its own line (a spoken "new line" doesn't move the start).
+            if (field.multiLine && laid != text && laid.contains('\n') && !atStart && before?.lastOrNull() != '\n') {
+                text = "\n" + laid
+            } else {
+                text = laid
+            }
         }
         return Insertion.forField(text, field)
     }

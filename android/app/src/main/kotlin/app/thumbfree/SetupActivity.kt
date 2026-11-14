@@ -186,7 +186,7 @@ class SetupActivity : Activity() {
                 13f, muted = true,
             ).spaced(0, 6),
         )
-        column.addView(switch("Keep my dictations to share", "Never from password or incognito fields", prefs.shareSamples) {
+        column.addView(switch("Keep my dictations to share", "ThumbFree keyboard only; never from password or incognito fields", prefs.shareSamples) {
             prefs.shareSamples = it
             refresh()
         })
