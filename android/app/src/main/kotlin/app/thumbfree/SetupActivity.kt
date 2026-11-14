@@ -30,6 +30,7 @@ import app.thumbfree.core.Language
 import app.thumbfree.core.ModelCatalog
 import app.thumbfree.core.ModelSpec
 import app.thumbfree.core.Professions
+import app.thumbfree.core.Tier
 import app.thumbfree.whisper.WhisperModel
 
 /** Getting started (three steps), speech models, options and the personal dictionary. */
@@ -49,6 +50,7 @@ class SetupActivity : Activity() {
     private lateinit var languageNote: TextView
     private lateinit var englishButton: Button
     private lateinit var hinglishButton: Button
+    private val tierButtons = mutableListOf<Triple<Language, Tier, Button>>()
     private lateinit var dictionary: EditText
 
     private val modelsChanged: () -> Unit = { refresh() }
@@ -111,14 +113,25 @@ class SetupActivity : Activity() {
         column.addView(languages)
         languageNote = text("", 13f, muted = true).spaced(6, 4)
         column.addView(languageNote)
-        column.addView(switch("Accurate English", "Bigger model: fewer mistakes, slower, no live preview (661 MB)", prefs.accurateEnglish) {
-            prefs.accurateEnglish = it
-            refresh()
-        })
-        column.addView(switch("Accurate Hindi + English", "Much bigger model: best Hinglish, several times slower, no live preview (874 MB)", prefs.accurateHinglish) {
-            prefs.accurateHinglish = it
-            refresh()
-        })
+        column.addView(text("English model", 15f, bold = true).spaced(10, 4))
+        column.addView(tierRow(Language.English, Tier.Live to "Live", Tier.Standard to "Standard", Tier.Accurate to "Accurate"))
+        column.addView(
+            text(
+                "Live: words appear as you speak (79 MB). Standard: types when you finish, a little more accurate (137 MB). " +
+                    "Accurate: fewest mistakes, slower, for phones with 6 GB+ memory (661 MB).",
+                13f, muted = true,
+            ).spaced(4, 4),
+        )
+        column.addView(text("Hindi + English model", 15f, bold = true).spaced(10, 4))
+        column.addView(tierRow(Language.Hinglish, Tier.Standard to "Standard", Tier.Accurate to "Accurate"))
+        column.addView(
+            text(
+                "Standard shows words as you speak (re-reading the last few seconds). Accurate is the best Hinglish but several " +
+                    "times slower, types when you finish, and needs 8 GB+ memory (874 MB).",
+                13f, muted = true,
+            ).spaced(4, 4),
+        )
+        column.addView(switch("Live typing", "Words go into the text box as you speak, underlined until you finish. Off: they show only on the keyboard, and Standard / Hindi + English save battery by not reading as you speak", prefs.liveTyping) { prefs.liveTyping = it })
 
         column.addView(heading("Speech models"))
         column.addView(text("Download once; they work offline after that.", 13f, muted = true).spaced(0, 8))
@@ -128,7 +141,6 @@ class SetupActivity : Activity() {
         column.addView(switch("Smart formatting", "Emails laid out, spoken lists turned into bullets, “3 pm… actually 4 pm” → “4 pm”", prefs.smartFormatting) { prefs.smartFormatting = it })
         column.addView(switch("Remove filler words", "um, uh, “you know”, “thik hai na”…", prefs.removeFillers) { prefs.removeFillers = it })
         column.addView(switch("Spoken punctuation", "Say “comma”, “full stop”, “new line”", prefs.spokenPunctuation) { prefs.spokenPunctuation = it })
-        column.addView(switch("Live preview", "Show words as you speak (uses more battery)", prefs.livePreview) { prefs.livePreview = it })
         column.addView(switch("Return to my keyboard", "Switch back after each dictation", prefs.switchBack) { prefs.switchBack = it })
         column.addView(switch("Vibrate", "A small tap when recording starts and stops", prefs.haptics) { prefs.haptics = it })
         if (BuildConfig.HAS_BUBBLE) column.addView(switch("Show the bubble", "When the bubble is turned on in Android's accessibility settings", prefs.bubble) { prefs.bubble = it })
@@ -219,7 +231,8 @@ class SetupActivity : Activity() {
         val version = packageManager.getPackageInfo(packageName, 0).versionName
         column.addView(
             text(
-                "Version $version · speech engines: NVIDIA Parakeet via sherpa-onnx (English), " +
+                "Version $version · speech engines: NVIDIA Parakeet and Kroko (live, by Banafo, CC BY-SA 4.0) via sherpa-onnx " +
+                    "with Edge-Punct-Casing punctuation (English), " +
                     "Whisper via whisper.cpp ($engine, Hindi + English)\n" +
                     "Speech is recognised on this phone, with no internet. Audio is kept only in memory while you dictate " +
                     "(unless you turn on “Keep my dictations to share”) and is never sent anywhere by ThumbFree. " +
@@ -265,10 +278,29 @@ class SetupActivity : Activity() {
 
     private fun setLanguage(language: Language) {
         prefs.language = language
-        val spec = prefs.model(language)
-        // Big models wait for an explicit tap on Download (with the memory and data warning).
-        if (!app.models.isInstalled(spec) && spec.bytes < BIG_MODEL_BYTES) app.models.download(spec)
+        downloadIfSmall(prefs.model(language))
         refresh()
+    }
+
+    private fun setTier(language: Language, tier: Tier) {
+        prefs.setTier(language, tier)
+        if (language == prefs.language) downloadIfSmall(prefs.model(language))
+        refresh()
+    }
+
+    /** Big models wait for an explicit tap on Download (with the memory and data warning). */
+    private fun downloadIfSmall(spec: ModelSpec) {
+        if (!app.models.isInstalled(spec) && spec.bytes < BIG_MODEL_BYTES) app.models.download(spec)
+    }
+
+    private fun tierRow(language: Language, vararg choices: Pair<Tier, String>): LinearLayout {
+        val row = LinearLayout(this)
+        choices.forEachIndexed { i, (tier, label) ->
+            val b = button(label) { setTier(language, tier) }
+            tierButtons += Triple(language, tier, b)
+            row.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { if (i < choices.lastIndex) marginEnd = dpi(8) })
+        }
+        return row
     }
 
     /** Starts a download; for big models, first explains the size, memory and mobile-data cost. */
@@ -309,6 +341,11 @@ class SetupActivity : Activity() {
         hinglishButton.isSelected = hinglish
         styleChoice(englishButton, !hinglish)
         styleChoice(hinglishButton, hinglish)
+        for ((language, tier, b) in tierButtons) {
+            val chosen = prefs.tier(language) == tier
+            b.isSelected = chosen
+            styleChoice(b, chosen)
+        }
         val spec = prefs.model()
         languageNote.text = when {
             app.models.isInstalled(spec) -> "Using “${spec.label}”."

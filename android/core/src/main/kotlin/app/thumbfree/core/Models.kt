@@ -10,7 +10,16 @@ enum class Engine {
 
     /** NVIDIA Parakeet TDT transducer via sherpa-onnx (ONNX Runtime). Punctuates and capitalizes by itself. */
     Parakeet,
+
+    /**
+     * A streaming transducer via sherpa-onnx's online recognizer: text arrives while you speak (live typing), with a
+     * small punctuation model on each finished phrase.
+     */
+    Streaming,
 }
+
+/** Speed/accuracy choice per language. [Live] streams words as you speak; [Accurate] is the biggest model. */
+enum class Tier { Live, Standard, Accurate }
 
 /** One downloadable file, pinned by SHA-256 (a mismatch deletes it). [path] is relative to the models folder. */
 data class ModelFile(val path: String, val url: String, val sha256: String, val bytes: Long)
@@ -31,7 +40,10 @@ data class ModelSpec(
     val bytes: Long get() = files.sumOf { it.bytes }
 
     /** Longest piece transcribed in one call: Whisper's window is 30 s (we use 14 s); Parakeet has no fixed window. */
-    val maxPieceSamples: Int get() = if (engine == Engine.Parakeet) SpeechAudio.SAMPLE_RATE * 30 else Decoding.MAX_PIECE_SAMPLES
+    val maxPieceSamples: Int get() = if (engine == Engine.Whisper) Decoding.MAX_PIECE_SAMPLES else SpeechAudio.SAMPLE_RATE * 30
+
+    /** Words arrive while you speak (no re-transcription for the live preview). */
+    val streaming: Boolean get() = engine == Engine.Streaming
 
     fun file(name: String) = files.first { it.path.substringAfterLast('/') == name }
 }
@@ -39,6 +51,26 @@ data class ModelSpec(
 object ModelCatalog {
     private const val PARAKEET_110M = "https://github.com/shivam098/thumbfree/releases/download/models-parakeet-110m-1"
     private const val PARAKEET_06B = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/84b478d541cdbf0c296a7ab5f1e20a6f8f998114"
+    private const val KROKO_LIVE = "https://github.com/shivam098/thumbfree/releases/download/models-kroko-en-live-1"
+
+    /**
+     * Kroko ASR English streaming Zipformer (Banafo, CC BY-SA 4.0) + Edge-Punct-Casing punctuation (Apache-2.0).
+     * About 10× faster than real time on two laptop cores: words appear as you say them.
+     */
+    val EnglishLive = ModelSpec(
+        id = "en-kroko-live",
+        label = "English, live (types as you speak)",
+        language = Language.English,
+        engine = Engine.Streaming,
+        files = listOf(
+            ModelFile("kroko-en-live/encoder.onnx", "$KROKO_LIVE/encoder.onnx", "d4881c57449d581e0770fd53fa66c2fdc6cd167d92ece7c715e603defc96d9d4", 70_092_599),
+            ModelFile("kroko-en-live/decoder.onnx", "$KROKO_LIVE/decoder.onnx", "455ba38466fce8d5a57e7db68a323b684079ca4d9e1dd93a740d9b2429aae3b1", 617_488),
+            ModelFile("kroko-en-live/joiner.onnx", "$KROKO_LIVE/joiner.onnx", "d406f616736350e2a7df3e39398b78eb2fc1a2ca6973a19d3853fa3227e25b52", 336_817),
+            ModelFile("kroko-en-live/tokens.txt", "$KROKO_LIVE/tokens.txt", "396dbeb5f4858875690716084f54e90d339679d0ba3e6b5b584f3d7589254d2d", 6_310),
+            ModelFile("kroko-en-live/punct.int8.onnx", "$KROKO_LIVE/punct.int8.onnx", "9d611f445fe4a46186080fe161be6059d87d72eb88d3a8cb00c1a06e83a6067e", 7_490_500),
+            ModelFile("kroko-en-live/punct-bpe.vocab", "$KROKO_LIVE/punct-bpe.vocab", "e118b7ad88c54db562517df49e1cffd4836d166c34fb190fd311d7f34eb238f5", 149_430),
+        ),
+    )
 
     /** NVIDIA parakeet-tdt_ctc-110m (CC BY 4.0), TDT head, int8 ONNX from sherpa-onnx. */
     val EnglishFast = ModelSpec(
@@ -105,18 +137,27 @@ object ModelCatalog {
         recommendedMemoryGb = 8,
     )
 
-    val all = listOf(EnglishFast, Hinglish, EnglishAccurate, HinglishAccurate)
+    val all = listOf(EnglishFast, EnglishLive, Hinglish, EnglishAccurate, HinglishAccurate)
 
     fun byId(id: String) = all.firstOrNull { it.id == id }
 
     /** Every file path any current model uses (anything else in the models folder is left over from older versions). */
     val knownPaths: Set<String> get() = all.flatMap { s -> s.files.map { it.path } }.toSet()
 
-    /** The model to use for a language: the bigger, slower one when [accurate]. */
-    fun forLanguage(language: Language, accurate: Boolean) = when (language) {
-        Language.Hinglish -> if (accurate) HinglishAccurate else Hinglish
-        Language.English -> if (accurate) EnglishAccurate else EnglishFast
+    /**
+     * The model for a language and tier. Hindi + English has no streaming model: its live tier is the standard model
+     * (live typing then updates about every half second instead of word by word).
+     */
+    fun forLanguage(language: Language, tier: Tier) = when (language) {
+        Language.Hinglish -> if (tier == Tier.Accurate) HinglishAccurate else Hinglish
+        Language.English -> when (tier) {
+            Tier.Live -> EnglishLive
+            Tier.Standard -> EnglishFast
+            Tier.Accurate -> EnglishAccurate
+        }
     }
+
+    fun forLanguage(language: Language, accurate: Boolean) = forLanguage(language, if (accurate) Tier.Accurate else Tier.Standard)
 }
 
 /** Decoder settings for one call. */

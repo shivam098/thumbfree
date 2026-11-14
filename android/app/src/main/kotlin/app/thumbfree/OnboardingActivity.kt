@@ -25,6 +25,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import app.thumbfree.core.Language
 import app.thumbfree.core.Professions
+import app.thumbfree.core.Tier
 
 /**
  * The first-run guide: why ThumbFree is different (offline), the microphone, the speech model, the keyboard, two
@@ -252,6 +253,23 @@ class OnboardingActivity : Activity() {
         choices.addView(choice("English", Language.English), LinearLayout.LayoutParams(0, dpi(52), 1f).apply { marginEnd = dpi(8) })
         choices.addView(choice("Hindi + English", Language.Hinglish), LinearLayout.LayoutParams(0, dpi(52), 1f))
         content.addView(choices, spaced(16, 12))
+        if (prefs.language == Language.English) {
+            val tiers = LinearLayout(this)
+            fun tier(label: String, tier: Tier) = bigButton(filled = prefs.englishTier == tier).apply {
+                text = label
+                setOnClickListener {
+                    prefs.englishTier = tier
+                    render()
+                }
+            }
+            tiers.addView(tier("Live", Tier.Live), LinearLayout.LayoutParams(0, dpi(52), 1f).apply { marginEnd = dpi(8) })
+            tiers.addView(tier("Standard", Tier.Standard), LinearLayout.LayoutParams(0, dpi(52), 1f))
+            content.addView(tiers, spaced(0, 6))
+            line(
+                if (prefs.englishTier == Tier.Standard) "Types when you finish; a little more accurate." else "Words appear in the text box as you speak.",
+                muted = true,
+            )
+        }
 
         val spec = prefs.model()
         val p = app.models.progress(spec)

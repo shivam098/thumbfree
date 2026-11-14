@@ -8,6 +8,7 @@ import app.thumbfree.core.DictationOptions
 import app.thumbfree.core.Language
 import app.thumbfree.core.ModelCatalog
 import app.thumbfree.core.PersonalDictionary
+import app.thumbfree.core.Tier
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
@@ -45,11 +46,33 @@ class Prefs(context: Context) {
         get() = if (sp.getString("language", "en") == "hinglish") Language.Hinglish else Language.English
         set(value) = sp.edit().putString("language", if (value == Language.Hinglish) "hinglish" else "en").apply()
 
-    var accurateEnglish by flag("accurate_english", false)
-    var accurateHinglish by flag("accurate_hinglish", false)
+    /**
+     * English model: Live types as you speak, Standard and Accurate type when you finish. Before 0.6 this was an
+     * "accurate" switch; people who already set up keep the model they downloaded, new people start on Live.
+     */
+    var englishTier: Tier
+        get() = tier("english_tier") ?: when {
+            sp.getBoolean("accurate_english", false) -> Tier.Accurate
+            onboarded -> Tier.Standard
+            else -> Tier.Live
+        }.also { englishTier = it } // decided once, so finishing the guide doesn't change it
+        set(value) = sp.edit().putString("english_tier", value.name).apply()
+
+    /** Hindi + English has no live model yet: Standard (live text by re-reading the newest audio) or Accurate. */
+    var hinglishTier: Tier
+        get() = (tier("hinglish_tier") ?: if (sp.getBoolean("accurate_hinglish", false)) Tier.Accurate else Tier.Standard)
+            .let { if (it == Tier.Live) Tier.Standard else it }
+        set(value) = sp.edit().putString("hinglish_tier", value.name).apply()
+
+    /**
+     * Words appear in the text box as you speak (underlined until you finish). Off, streaming models still show them on
+     * the keyboard, and the others don't re-read the audio while you speak. Replaces 0.5's "Live preview" switch.
+     */
+    var liveTyping: Boolean
+        get() = sp.getBoolean("live_typing", sp.getBoolean("live_preview", true))
+        set(value) = sp.edit().putBoolean("live_typing", value).apply()
     var removeFillers by flag("remove_fillers", true)
     var spokenPunctuation by flag("spoken_punctuation", true)
-    var livePreview by flag("live_preview", true)
     var switchBack by flag("switch_back", false)
     var haptics by flag("haptics", true)
 
@@ -84,10 +107,16 @@ class Prefs(context: Context) {
         get() = sp.getString("vocabulary", "") ?: ""
         set(value) = sp.edit().putString("vocabulary", value).apply()
 
-    fun accurate(language: Language) = if (language == Language.Hinglish) accurateHinglish else accurateEnglish
+    fun tier(language: Language) = if (language == Language.Hinglish) hinglishTier else englishTier
 
-    /** The speech model for the current language and accuracy choice. */
-    fun model(language: Language = this.language) = ModelCatalog.forLanguage(language, accurate(language))
+    fun setTier(language: Language, tier: Tier) {
+        if (language == Language.Hinglish) hinglishTier = tier else englishTier = tier
+    }
+
+    /** The speech model for the language and its chosen tier. */
+    fun model(language: Language = this.language) = ModelCatalog.forLanguage(language, tier(language))
+
+    private fun tier(key: String) = sp.getString(key, null)?.let { name -> Tier.entries.firstOrNull { it.name == name } }
 
     fun dictationOptions() = DictationOptions(
         removeFillerWords = removeFillers,

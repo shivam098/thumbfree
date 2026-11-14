@@ -12,7 +12,12 @@ import app.thumbfree.core.SpeechAudio
  * [onLevel] gets the loudness of each 100 ms chunk, and [onEnded] is called if recording stops by itself (the system
  * took the microphone); both on the capture thread.
  */
-class Recorder(private val onLevel: (Float) -> Unit, private val onEnded: () -> Unit = {}) {
+class Recorder(
+    private val onLevel: (Float) -> Unit,
+    private val onEnded: () -> Unit = {},
+    /** Each new 100 ms chunk (a copy), for streaming recognition. */
+    private val onChunk: ((FloatArray) -> Unit)? = null,
+) {
     private val lock = Any()
     private var data = FloatArray(RATE * 20)
     private var size = 0
@@ -92,6 +97,7 @@ class Recorder(private val onLevel: (Float) -> Unit, private val onEnded: () -> 
                 silentRun += n
             }
             onLevel(SpeechAudio.rms(chunk, 0, n))
+            onChunk?.invoke(chunk.copyOf(n))
         }
         if (running) onEnded()
     }

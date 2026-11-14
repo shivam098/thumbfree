@@ -2,7 +2,7 @@
 # Installs each edition's debug app and test APK on a connected device or emulator, copies speech models to it and runs
 # the on-device tests. Usage: scripts/android-device-test.sh <apk-dir> [models-dir]
 #   apk-dir is app/build/outputs/apk (or a copy of it); editions: standard, bubble.
-#   models-dir may hold ggml-base.en-q8_0.bin (Whisper tests) and parakeet-tdt-110m/ (Parakeet tests).
+#   models-dir may hold ggml-base.en-q8_0.bin (Whisper tests) and parakeet-tdt-110m/ (Parakeet tests) and kroko-en-live/ (live typing tests).
 set -euo pipefail
 
 apks="$1"

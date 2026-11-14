@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import app.thumbfree.core.LivePreview
 import app.thumbfree.core.ModelSpec
+import app.thumbfree.core.TranscriptText
 import app.thumbfree.core.Vocabulary
 
 /**
@@ -50,6 +51,7 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
     private var orphan: ((Transcript?) -> Unit)? = null
     private var warnedSilent = false
     private var lastPreview = ""
+    private var tickMs = TICK_MS
 
     val recording: Boolean get() = recorder != null
     var finishing = false
@@ -67,6 +69,11 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
         if (!app.models.isInstalled(spec)) return Problem.NoModel
 
         val s = session + 1
+        val words = Vocabulary.parse(app.prefs.vocabulary)
+        if (spec.streaming) {
+            // Queued before the microphone starts, so the very first chunk already has a session to go to.
+            app.engine.run { openLive(s, spec) }
+        }
         val rec = Recorder(
             onLevel = { level -> main.post { if (s == session && recorder != null) listener.onLevel(level) } },
             onEnded = {
@@ -77,32 +84,86 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
                     }
                 }
             },
+            onChunk = if (spec.streaming) { chunk -> app.engine.run { feedLive(s, chunk, words) } } else null,
         )
-        if (!rec.start()) return Problem.MicUnavailable
+        if (!rec.start()) {
+            if (spec.streaming) app.engine.run { closeLive() }
+            return Problem.MicUnavailable
+        }
 
         session = s
         recorder = rec
         this.spec = spec
         active = this
-        vocabulary = Vocabulary.parse(app.prefs.vocabulary)
+        vocabulary = words
         previewBusy = false
-        previewAllowed = app.prefs.livePreview && spec.livePreview
+        // Streaming models report text themselves; the others re-transcribe the newest audio for the preview.
+        previewAllowed = app.prefs.liveTyping && spec.livePreview && !spec.streaming
         warnedSilent = false
         lastPreview = ""
         app.holdModel()
-        app.engine.run {
-            try {
-                app.engine.model(spec).resume()
-            } catch (e: Exception) {
-                main.post { if (s == session && recorder != null) listener.onWarning("Couldn't load the speech model. Download it again in ThumbFree.") }
+        if (!spec.streaming) {
+            app.engine.run {
+                try {
+                    app.engine.model(spec).resume()
+                } catch (e: Exception) {
+                    main.post { if (s == session && recorder != null) listener.onWarning("Couldn't load the speech model. Download it again in ThumbFree.") }
+                }
             }
         }
-        val words = vocabulary
         preview = LivePreview({ audio ->
             if (!previewAllowed) null else app.engine.loaded()?.let { app.engine.preview(it, audio, words, spec.promptVocabulary) }
         })
-        main.postDelayed(tick, TICK_MS)
+        tickMs = if (app.prefs.liveTyping) LIVE_TICK_MS else TICK_MS
+        main.postDelayed(tick, tickMs)
         return null
+    }
+
+    // ---- streaming (speech thread) ----
+
+    private var live: StreamingRecognizer.Session? = null
+    private var liveFor = -1
+    private var liveSent = ""
+
+    private fun openLive(s: Int, spec: ModelSpec) {
+        closeLive()
+        try {
+            val model = app.engine.model(spec) as StreamingRecognizer
+            model.resume()
+            live = model.session()
+            liveFor = s
+            liveSent = ""
+        } catch (e: Exception) {
+            main.post { if (s == session && recorder != null) listener.onWarning("Couldn't load the speech model. Download it again in ThumbFree.") }
+        }
+    }
+
+    private fun feedLive(s: Int, chunk: FloatArray, words: List<String>) {
+        if (liveFor != s) return
+        val text = Vocabulary.correct(live?.accept(chunk) ?: return, words)
+        if (text == liveSent) return
+        liveSent = text
+        main.post {
+            if (s == session && recorder != null) {
+                lastPreview = text
+                if (!warnedSilent) listener.onPreview(text)
+            }
+        }
+    }
+
+    /** Ends the live session of dictation [s] and returns its text (null if there was none). */
+    private fun finishLive(s: Int): String? {
+        if (liveFor != s) return null
+        val text = live?.finish()
+        live = null
+        liveFor = -1
+        return text
+    }
+
+    private fun closeLive() {
+        live?.close()
+        live = null
+        liveFor = -1
     }
 
     private val tick = object : Runnable {
@@ -141,7 +202,7 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
                     }
                 }
             }
-            main.postDelayed(this, TICK_MS)
+            main.postDelayed(this, tickMs)
         }
     }
 
@@ -163,7 +224,13 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
             val raw = try {
                 val model = app.engine.model(spec)
                 model.resume()
-                app.engine.transcribe(model, audio, words, spec.promptVocabulary, spec.maxPieceSamples)
+                if (spec.streaming) {
+                    // Every chunk was queued before this, so the live session has heard everything already.
+                    (finishLive(s) ?: model.transcribe(audio, preview = false))
+                        ?.let { Vocabulary.correct(TranscriptText.clean(it), words) }
+                } else {
+                    app.engine.transcribe(model, audio, words, spec.promptVocabulary, spec.maxPieceSamples)
+                }
             } catch (e: Exception) {
                 null
             }
@@ -181,6 +248,7 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
         session++
         finishing = false
         app.engine.abort()
+        app.engine.run { closeLive() }
         clearSilentAlert()
         release()
     }
@@ -225,6 +293,9 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
 
     companion object {
         private const val TICK_MS = 900L
+
+        /** With live typing the preview is the text in the box: refresh it more often (each update skips if busy). */
+        private const val LIVE_TICK_MS = 500L
 
         /** The dictation using the microphone or the speech engine (main thread). */
         private var active: Dictation? = null

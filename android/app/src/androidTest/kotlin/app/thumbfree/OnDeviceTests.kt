@@ -177,3 +177,51 @@ class ParakeetOnDeviceTest {
         }
     }
 }
+
+/**
+ * Kroko streaming (English, live typing) through sherpa-onnx. Runs when CI has pushed the model files to
+ * /data/local/tmp/thumbfree/kroko-en-live/.
+ */
+@RunWith(AndroidJUnit4::class)
+class StreamingOnDeviceTest {
+    private val dir = File(deviceModels, "kroko-en-live")
+    private val threads = SpeechEngine { dir }.threads
+
+    @Test
+    fun types_while_you_speak_and_finishes_with_punctuation() {
+        assumeTrue("no model at $dir", File(dir, "encoder.onnx").canRead())
+        val started = System.nanoTime()
+        val model = StreamingRecognizer.load(dir, threads)
+        println("ThumbFree kroko load: ${(System.nanoTime() - started) / 1_000_000} ms")
+        model.use {
+            // As the keyboard does: 100 ms of audio at a time, text back after each.
+            val audio = wav("dictation.wav")
+            val session = it.session()
+            val seen = ArrayList<String>()
+            val began = System.nanoTime()
+            var i = 0
+            while (i < audio.size) {
+                val end = minOf(audio.size, i + 1_600)
+                seen += session.accept(audio.copyOfRange(i, end))
+                i = end
+            }
+            val text = session.finish()
+            val ms = (System.nanoTime() - began) / 1_000_000
+            println("ThumbFree kroko live: $ms ms for ${audio.size / 16} ms of audio: $text")
+            assertTrue("keeps up with speech: $ms ms", ms < audio.size / 16)
+            assertTrue("text arrives while speaking: ${seen.take(40)}", seen.take(seen.size / 2).any { s -> s.isNotEmpty() })
+            val fixed = app.thumbfree.core.Vocabulary.correct(text, listOf("GitHub Copilot", "Kubernetes"))
+            assertTrue(fixed, fixed.contains("GitHub Copilot"))
+            assertTrue(fixed, fixed.contains("pull request", ignoreCase = true))
+            assertTrue("punctuated: $text", text.any { c -> c == '.' || c == ',' || c == '?' })
+
+            val logs = timed("kroko whole recording", wav("send-logs.wav")) { it.transcribe(wav("send-logs.wav"), preview = false) }!!
+            assertTrue(logs, logs.contains("send me the latest build logs", ignoreCase = true))
+
+            it.abort()
+            assertEquals(null, it.transcribe(audio, preview = false))
+            it.resume()
+            assertEquals("", it.transcribe(FloatArray(16_000), preview = false))
+        }
+    }
+}
