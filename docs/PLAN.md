@@ -8,7 +8,7 @@ ThumbFree is the dictation half of Voice Assistant **without "Hey Jarvis"**: no 
 navigation, no idea board. The microphone is on only while you dictate, so there's no always-on listening and no battery
 drain when idle.
 
-**Status (Nov 2026):** Android is built (v0.4.0: voice keyboard, bubble, first-run guide). Windows exists as Voice
+**Status (Nov 2026):** Android is built (v0.5.0: voice keyboard and bubble with tap-to-start / tap-to-finish, first-run guide; Google Play ready: Android 16 target, app bundle). Windows exists as Voice
 Dictation 0.3. iPhone and Mac are next. [Section 3](#3-feature-reference-built-on-android-copy-to-every-platform) is the
 feature reference that every platform implements.
 
@@ -41,6 +41,26 @@ Each feature below shipped on Android between v0.1 and v0.4. It came from testin
 Wispr Flow's onboarding. The rules are written so the iPhone, Mac and Windows apps behave identically. **Shared test
 data proves it:** every port must pass `tests/vectors/formatter.tsv` and `tests/vectors/layout.tsv` on the device
 itself, not just on a computer, because regex engines differ.
+
+### 3.0 How dictation starts and stops: tap, talk, tap (every platform)
+
+**No push-to-talk anywhere.** Nobody has to keep holding a button or keys. One control toggles dictation:
+
+| State | What you do | What you see |
+|---|---|---|
+| **Ready** | Tap the mic (Android/iPhone keyboard, bubble), or press the hotkey once (Mac: Fn/Globe or Right Option; Windows: Ctrl+Win) | Mic icon; "Tap to talk" / "Ctrl+Win to dictate" |
+| **Listening** | Speak. Tap / press the hotkey again to finish. ✕ or Esc cancels. | The control turns red with a stop square, a ring or meter moves with your voice, an elapsed timer runs ("0:07 · tap when you're done"), and your words appear live (where the model allows a live preview) |
+| **Transcribing** | Nothing: wait a moment | The control dims with a spinning arc, and the pill or status reads "Transcribing…" until the text is typed |
+| **Done** | — | The typed text is shown briefly, or "Didn't catch anything" / an error |
+
+Rules:
+
+- **Releasing the key does nothing.** Holding by habit just means it's still listening; the next press finishes.
+- Recording also finishes by itself at the 10-minute limit, or when the system takes the microphone (3.6). It then goes
+  straight to Transcribing.
+- Haptic tick (phones) when listening starts and when it stops.
+- Shipped: Android v0.5 (keyboard and bubble). Windows (Voice Dictation 0.4, Voice Assistant 0.10): Ctrl+Win
+  toggles, and Ctrl+Win+Space is kept as an alias.
 
 ### 3.1 Speech engines and models
 
@@ -190,14 +210,14 @@ Settings. Steps:
 
 ### 3.9 Keyboard UI (Android reference)
 
-- Big round mic. Hold to talk; a quick tap for hands-free; slide up to cancel. The ring pulses with your voice.
+- Big round mic: tap to talk, tap to finish (3.0). While listening: red stop square, voice ring, timer, ✕ cancel key. While transcribing: spinning arc.
 - Status line with the live preview. Keys: switch keyboard (long-press for the list), EN / HI+EN, insert the last
   dictation again, space, delete (repeats), enter (follows the field's action: send, search, done…).
-- Settings button. Idle text: "Hold the mic and speak · offline".
+- Settings button. Idle text: "Tap the mic and speak · offline".
 
 ## 4. Platform designs
 
-### 4.1 Android (built: v0.4.0)
+### 4.1 Android (built: v0.5.0)
 
 Native Kotlin. sherpa-onnx (Parakeet) and whisper.cpp (two CPU builds: ARMv8.0 and ARMv8.2) through JNI. Views are
 built in code, with no UI libraries. APK: 27.6 MB.
@@ -211,7 +231,7 @@ built in code, with no UI libraries. APK: 27.6 MB.
     app that declares an accessibility service. That's what happened to v0.4.0 on the Pixel 11.
   - The bubble edition is meant for the Play Store (not affected) or `adb` installs.
   - Any other platform feature that needs a "sensitive" permission should follow the same pattern.
-- Details and build steps: [android.md](android.md).
+- Details and build steps: [android.md](android.md). Publishing on Google Play, step by step: [google-play.md](google-play.md).
 - Next: real-phone testing of the bubble and the notifications. Then a Play internal test, which needs the
   accessibility declaration form, the Data safety form ("no data collected", since samples never leave the device
   unless the user shares them) and a privacy policy page.
@@ -268,9 +288,9 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
 - **Shape:**
   - A menu-bar app (`LSUIElement`) plus a settings window.
   - The status pill is a non-activating, click-through `NSPanel` showing the live preview and the warnings (3.6).
-- **Hotkey:** hold Fn/Globe via a `CGEventTap` on `flagsChanged` (needs **Input Monitoring**). Alternatives: Right
-  Option or a custom chord. Fn may need "Press 🌐 key to: Do Nothing"; the guide explains it. A tap of the hotkey gives
-  hands-free; Esc cancels.
+- **Hotkey:** press Fn/Globe once to start and once more to finish (3.0), via a `CGEventTap` on `flagsChanged` (needs
+  **Input Monitoring**). Alternatives: Right Option or a custom chord. Fn may need "Press 🌐 key to: Do Nothing"; the
+  guide explains it. Esc cancels. The pill shows the listening and transcribing states (3.0).
 - **Optional floating mic** next to the focused text field (3.5).
 - **Audio:** `AVAudioEngine` at 16 kHz mono, plus the Microphone permission.
 - **Insertion:**
@@ -297,7 +317,8 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
 
 ### 4.4 Windows (from Voice Dictation 0.3)
 
-- Keep: Ctrl+Win hold, Ctrl+Win+Space hands-free, Esc cancel, Alt+Shift+H language, Alt+Shift+Z paste last. Clipboard
+- Keep: Ctrl+Win to start and to finish (3.0; it was hold-to-talk before 0.4), Ctrl+Win+Space as an alias, Esc cancel,
+  Alt+Shift+H language, Alt+Shift+Z paste last. Clipboard
   paste with restore and history/cloud exclusion. Refuse password fields and elevated windows.
 - Add from 3:
   - Parakeet for English (sherpa-onnx has Windows x64 and ARM64 builds; measured 17 s of speech in 0.4 s on a
@@ -351,7 +372,8 @@ thumbfree/
 | Phase | Goal | Done when |
 |---|---|---|
 | **Android 0.1–0.4** ✅ | Keyboard, Parakeet + Whisper, word list, emails/lists/corrections, bubble, notifications, guide, opt-in samples | Released v0.4.0; CI: core tests, APK build, emulator tests (formatter + layout vectors, both engines, every guide screen) |
-| **Android 0.5** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then a Play internal test | Bubble works in the top 10 apps; Play listing approved |
+| **Android 0.5** ✅ | Tap to start / tap to finish with listening and transcribing states (3.0); standard + bubble editions; Android 16 target and a Play app bundle | Released v0.5.0 |
+| **Android 0.6** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then Google Play: internal test, then a closed test (12+ testers for 14 days, required for new personal accounts), then production | Bubble works in the top 10 apps; Play listing approved |
 | **Apple spike** (week 1) | (a) The `android/core` KMP framework passing both vector files on the iOS Simulator and macOS; (b) iPhone: keyboard Start → app session → swipe back → mic in the keyboard → text inserted, on a real iPhone; (c) Parakeet 110M speed on iPhone and Mac | All three work, or the fallback (Swift port, different session design) is chosen |
 | **iPhone 0.x** (weeks 2–5) | Keyboard + app session, models, guide, notifications, Shortcuts action, opt-in samples | TestFlight with the acceptance list (Messages, WhatsApp, Mail, Notes, Safari) |
 | **Mac 0.x** (weeks 4–7) | Menu bar, hotkey, pill, paste with the same-field check, guide, optional floating mic | Notarized `.dmg`; acceptance on a real Mac (Notes, Mail, Safari, Chrome, Slack, VS Code, Terminal) |
@@ -368,7 +390,7 @@ One product version across platforms; release assets per platform.
   through formatting. Timings are printed so regressions show.
 - **Screen smoke tests:** every guide step and Settings open without crashing.
 - **Real-device acceptance checklist** per platform:
-  - dictate, hands-free, cancel, Hinglish;
+  - dictate (tap / tap: listening and transcribing states visible), cancel, Hinglish;
   - email and list layout in a mail app and a notes app;
   - "actually" corrections;
   - password refusal;

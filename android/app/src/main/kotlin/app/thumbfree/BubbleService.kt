@@ -291,10 +291,15 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
     }
 
     private fun finishDictation() {
-        mic.recording = false
-        say("Writing…")
-        dictation.finish()
+        dictation.finish() // → onFinishing shows "Transcribing…"
         MicService.stop(this) // the transcript is made without the microphone
+    }
+
+    override fun onFinishing() {
+        mic.recording = false
+        mic.transcribing = true
+        say("Transcribing…")
+        MicService.stop(this)
     }
 
     override fun onLevel(level: Float) {
@@ -310,6 +315,7 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
     override fun onTranscript(result: Dictation.Transcript?) {
         MicService.stop(this)
         mic.recording = false
+        mic.transcribing = false
         // Only the text box the dictation was started in: never whatever has focus now.
         val node = target?.takeIf { it.refresh() }
         target = null

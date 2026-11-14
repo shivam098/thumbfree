@@ -22,6 +22,9 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
         /** Something to show instead of the preview (the microphone went silent, the model didn't load…). */
         fun onWarning(message: String) {}
 
+        /** Recording has stopped (tapped, the 10-minute limit, or the system took the microphone); transcribing now. */
+        fun onFinishing() {}
+
         /** The final transcript (raw text is "" when nothing was said), or null if it couldn't be made. */
         fun onTranscript(result: Transcript?)
     }
@@ -152,6 +155,7 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
         val audio = rec.stop()
         clearSilentAlert()
         app.engine.abort() // stop a preview in progress; the final pass resumes the model
+        listener.onFinishing()
         val s = session
         val words = vocabulary
         app.engine.run {

@@ -1,7 +1,7 @@
 # ThumbFree for Android: how it's built
 
-ThumbFree on Android is a **voice keyboard** (an input method). Switch to it in any app, hold the mic and talk; when you
-let go, cleaned-up text is typed where the cursor is. Speech recognition runs on the phone; nothing is uploaded.
+ThumbFree on Android is a **voice keyboard** (an input method). Switch to it in any app, tap the mic and talk, and tap
+it again: cleaned-up text is typed where the cursor is. Speech recognition runs on the phone; nothing is uploaded.
 
 ## Speech engines and models
 
@@ -42,12 +42,12 @@ tests/audio/                  short speech clips for the on-device tests
 
 ## How a dictation flows
 
-1. **Press the mic.** `Recorder` opens the microphone (`AudioRecord`, `VOICE_RECOGNITION`, 16 kHz mono float) on a
+1. **Tap the mic.** It turns red with a stop square, a ring follows your voice level and a timer runs. `Recorder` opens the microphone (`AudioRecord`, `VOICE_RECOGNITION`, 16 kHz mono float) on a
    high-priority thread. The model loads in the background on the single "speech" thread if it isn't loaded yet.
 2. **While you talk** (optional live preview), every ~0.9 s `LivePreview` re-transcribes the newest audio (Whisper
    with a small audio context sized to the clip). Audio older than 10 s is transcribed once, cut at a pause and kept,
    so updates never grow with the length of the dictation.
-3. **Release.** Any preview still running is aborted. The recording is trimmed to the speech (energy-based detection
+3. **Tap again** (or ✕ to cancel). The mic shows a spinning "Transcribing…" state until the text is written. Any preview still running is aborted. The recording is trimmed to the speech (energy-based detection
    with 250 ms margins), split at pauses into pieces (at most 30 s for Parakeet, 14 s for Whisper), and each piece is
    transcribed with the full-quality settings. The accurate Hinglish model also gets your "words I use often" list as a
    prompt; the fast one doesn't (it was measured to garble the output), and Parakeet can't take one (sherpa-onnx

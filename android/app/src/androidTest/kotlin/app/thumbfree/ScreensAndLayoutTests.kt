@@ -50,6 +50,26 @@ class ScreensOnDeviceTest {
     }
 
     @Test
+    fun mic_button_draws_every_state() {
+        val mic = MicButton(context)
+        mic.layout(0, 0, 300, 300)
+        val canvas = android.graphics.Canvas(android.graphics.Bitmap.createBitmap(300, 300, android.graphics.Bitmap.Config.ARGB_8888))
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            mic.draw(canvas)
+            mic.recording = true
+            mic.level = 0.05f
+            assertEquals("Listening. Tap to finish.", mic.contentDescription)
+            mic.draw(canvas)
+            mic.recording = false
+            mic.transcribing = true
+            assertEquals("Transcribing", mic.contentDescription)
+            mic.draw(canvas)
+            mic.transcribing = false
+            assertEquals("Microphone. Tap to dictate.", mic.contentDescription)
+        }
+    }
+
+    @Test
     fun accessibility_service_only_in_the_bubble_edition() {
         // Play Protect blocks sideloading apps that declare one (India), so the standard APK must not.
         val info = context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)

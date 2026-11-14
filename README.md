@@ -7,7 +7,8 @@ account and no cloud: speech is recognised on the device, so it works on a plane
 nobody else ever hears what you said. Most voice-typing apps (Wispr Flow, for example) send every dictation to their
 servers; ThumbFree never does.
 
-- **Hold the mic, talk, let go**: the text appears where the cursor is.
+- **Tap, talk, tap**: tap the mic and speak while you watch your voice level and words appear; tap again, it shows
+  "Transcribing…", and the text appears where the cursor is. Nothing to hold.
 - **Writes like you meant to**: removes filler words ("um", "you know", "basically", "thik hai na"…) and repeats, adds
   punctuation, and understands spoken punctuation ("comma", "new line", "new paragraph").
 - **Emails and lists, laid out for you**: "Hey Tim, … Thanks, Ben" gets its greeting and sign-off on their own lines;
@@ -50,8 +51,9 @@ once it's listed. Both are signed with the same key, so you can switch without l
 
 The keyboard:
 
-- **Hold** the mic and speak; **let go** to write. **Tap** for hands-free; tap again when you're done.
-- **Slide up** while holding to cancel.
+- **Tap** the mic and speak. It turns red, a ring moves with your voice, a timer runs and your words appear as you
+  talk. **Tap** it again when you're done: it shows "Transcribing…" and then types the text.
+- **✕** cancels while recording.
 - **EN / HI+EN** switches language; **⌨** goes back to your usual keyboard (long-press for the list).
 - **↺** types your last dictation again.
 
@@ -70,6 +72,11 @@ Settings.
   from the ThumbFree keyboard are kept on the phone (never from password or incognito fields, never from the bubble), and are sent only if you tap **Share** and pick
   where they go. **Delete all** removes them.
 - Settings are not included in cloud backups.
+
+### Google Play
+
+How to publish (account, listing text, data safety, accessibility declaration, testing tracks): [docs/google-play.md](docs/google-play.md).
+Privacy policy: [docs/privacy.md](docs/privacy.md).
 
 ### Build it yourself
 
