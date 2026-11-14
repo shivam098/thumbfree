@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "app.thumbfree.whisper"
-    compileSdk = 35
+    compileSdk = 36
     // CI passes the NDK the runner has installed; locally AGP's default is used.
     System.getenv("ANDROID_NDK_VERSION")?.let { ndkVersion = it }
 

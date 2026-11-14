@@ -6,7 +6,7 @@ plugins {
 // as :whisper with a different variant, packaged as libthumbfree_whisper_v82.so. :whisper picks it at runtime.
 android {
     namespace = "app.thumbfree.whisper.v82"
-    compileSdk = 35
+    compileSdk = 36
     System.getenv("ANDROID_NDK_VERSION")?.let { ndkVersion = it }
 
     defaultConfig {

@@ -5,6 +5,7 @@ import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -21,12 +22,12 @@ import app.thumbfree.core.Insertion
 import app.thumbfree.core.Language
 
 /**
- * The ThumbFree voice keyboard. Hold the mic and speak; release to write the cleaned-up text where the cursor is.
- * A quick tap starts hands-free dictation (tap again to finish); sliding up before releasing cancels.
+ * The ThumbFree voice keyboard. Tap the mic and speak; tap it again and the cleaned-up text is written where the cursor
+ * is. While recording you see your voice level, the time and the words so far; then it shows "Transcribing…". ✕ cancels.
  * The microphone is on only during dictation, and audio never leaves the phone.
  */
 class VoiceKeyboard : InputMethodService(), Dictation.Listener {
-    private enum class State { Idle, Holding, HandsFree, Finishing }
+    private enum class State { Idle, Recording, Transcribing }
 
     private enum class Tone { Muted, Active, Ok, Warn }
 
@@ -39,15 +40,14 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     private var lastText: String? = null
 
     private val dictation by lazy { Dictation(app, this) }
-    private var downAt = 0L
-    private var ignoreUp = false
-    private var wantsCancel = false
+    private var startedAt = 0L
 
     private lateinit var status: TextView
     private lateinit var hint: TextView
     private lateinit var mic: MicButton
     private lateinit var languageKey: TextView
     private lateinit var enterKey: TextView
+    private lateinit var cancelKey: TextView
 
     private val app get() = thumbFree
     private val prefs get() = app.prefs
@@ -81,12 +81,17 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
             setPadding(dpi(6), 0, dpi(6), 0)
         }
         top.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        cancelKey = key("✕", "Cancel dictation") { cancel() }.apply {
+            textSize = 16f
+            visibility = View.GONE
+        }
+        top.addView(cancelKey, LinearLayout.LayoutParams(dpi(44), dpi(36)).apply { marginEnd = dpi(6) })
         top.addView(key("⚙", "ThumbFree settings") { openSetup() }.apply { textSize = 16f }, LinearLayout.LayoutParams(dpi(44), dpi(36)))
         root.addView(top)
 
         mic = MicButton(this)
-        mic.setOnTouchListener { _, e -> onMicTouch(e) }
-        mic.setOnClickListener { onMicClick() } // TalkBack double-tap
+        // Tap to start, tap again to finish: nothing to hold.
+        mic.setOnClickListener { onMicTap() }
         root.addView(mic, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpi(116)))
 
         hint = TextView(this).apply {
@@ -155,19 +160,14 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     }
 
     /**
-     * The text box is going away. A hold in progress is cancelled (the finger left), but hands-free dictation and a
-     * transcript still being written are kept: never typed elsewhere, but saved in a notification to copy.
+     * The text box is going away. A dictation still recording or being transcribed is never typed elsewhere: it's
+     * finished and saved in a notification to copy.
      */
     private fun leaveField() {
-        when (state) {
-            State.Holding -> dictation.cancel()
-            State.HandsFree, State.Finishing -> {
-                val private = field.private
-                dictation.detach { result -> saveOrphan(result, private) }
-            }
-            State.Idle -> Unit
+        if (state == State.Recording || state == State.Transcribing) {
+            val private = field.private
+            dictation.detach { result -> saveOrphan(result, private) }
         }
-        if (::mic.isInitialized) mic.recording = false
         setState(State.Idle)
     }
 
@@ -176,129 +176,76 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         if (!text.isNullOrEmpty() && !private) app.notifier.undelivered(text, "Your dictation wasn't typed: the text box closed.")
     }
 
-    // ---- dictation ----
+    // ---- dictation: tap to start, tap again to finish ----
 
-    private fun onMicTouch(e: MotionEvent): Boolean {
-        when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                ignoreUp = false
-                when (state) {
-                    State.HandsFree -> {
-                        finish()
-                        ignoreUp = true
-                    }
-                    State.Idle -> {
-                        downAt = e.eventTime
-                        wantsCancel = false
-                        if (start()) setState(State.Holding) else ignoreUp = true
-                    }
-                    else -> ignoreUp = true
-                }
-            }
-            MotionEvent.ACTION_MOVE -> if (state == State.Holding) {
-                val cancelZone = e.y < -mic.height * 0.25f
-                if (cancelZone != wantsCancel) {
-                    wantsCancel = cancelZone
-                    show(if (cancelZone) "Release to cancel" else "Listening…", if (cancelZone) Tone.Warn else Tone.Active)
-                }
-            }
-            MotionEvent.ACTION_UP -> if (!ignoreUp && state == State.Holding) {
-                when {
-                    wantsCancel -> cancel()
-                    e.eventTime - downAt < TAP_MS -> {
-                        setState(State.HandsFree)
-                        show("Hands-free: speak, then tap the mic to finish", Tone.Active)
-                    }
-                    else -> finish()
-                }
-            }
-            MotionEvent.ACTION_CANCEL -> if (state == State.Holding) cancel(silent = true)
-        }
-        return true
-    }
-
-    private fun onMicClick() {
+    private fun onMicTap() {
         when (state) {
-            State.Idle -> if (start()) setState(State.HandsFree)
-            State.HandsFree, State.Holding -> finish()
-            State.Finishing -> Unit
+            State.Idle -> start()
+            State.Recording -> finish()
+            State.Transcribing -> show("Transcribing… one moment", Tone.Active)
         }
     }
 
-    private fun start(): Boolean {
-        if (state != State.Idle) return false
-        if (field.password) {
-            show("Dictation is off in password fields", Tone.Warn)
-            return false
-        }
+    private fun start() {
+        if (field.password) return show("Dictation is off in password fields", Tone.Warn)
         when (dictation.start()) {
             null -> Unit
             Dictation.Problem.NoPermission -> {
                 show("Allow the microphone in ThumbFree first", Tone.Warn)
-                openSetup()
-                return false
+                return openSetup()
             }
             Dictation.Problem.NoModel -> {
                 show("Download the “${prefs.model().label}” speech model in ThumbFree first", Tone.Warn)
-                openSetup()
-                return false
+                return openSetup()
             }
-            Dictation.Problem.MicUnavailable -> {
-                show("Couldn't start the microphone. Is another app using it?", Tone.Warn)
-                return false
-            }
-            Dictation.Problem.Busy -> {
-                show("Still writing the last dictation…", Tone.Muted)
-                return false
-            }
+            Dictation.Problem.MicUnavailable -> return show("Couldn't start the microphone. Is another app using it?", Tone.Warn)
+            Dictation.Problem.Busy -> return show("Still transcribing the last dictation…", Tone.Muted)
         }
-        mic.recording = true
+        startedAt = SystemClock.elapsedRealtime()
+        setState(State.Recording)
         haptic()
         val spec = dictation.model
         show(if (prefs.livePreview && spec != null && !spec.livePreview) "Listening… (no live preview with this model)" else "Listening…", Tone.Active)
-        return true
     }
 
     private fun finish() {
         if (!dictation.recording) return
-        setState(State.Finishing)
-        mic.recording = false
         haptic()
-        show("Writing…", Tone.Active)
-        dictation.finish()
+        dictation.finish() // → onFinishing → Transcribing
     }
 
-    private fun cancel(silent: Boolean = false) {
+    private fun cancel() {
+        if (state != State.Recording) return
         dictation.cancel()
-        mic.recording = false
         setState(State.Idle)
-        if (!silent) {
-            haptic()
-            show("Cancelled", Tone.Muted)
-        }
+        haptic()
+        show("Cancelled", Tone.Muted)
     }
 
     override fun onLevel(level: Float) {
-        if (::mic.isInitialized && dictation.recording) mic.level = level
+        if (::mic.isInitialized && state == State.Recording) mic.level = level
     }
 
     override fun onPreview(text: String) {
-        if (state == State.Holding || state == State.HandsFree) show(text.ifEmpty { "Listening…" }, Tone.Active)
+        if (state == State.Recording) show(text.ifEmpty { "Listening…" }, Tone.Active)
     }
 
     override fun onWarning(message: String) = show(message, Tone.Warn)
 
+    /** Recording stopped (tapped, the 10-minute limit, or another app took the microphone): now transcribing. */
+    override fun onFinishing(reason: String?) {
+        setState(State.Transcribing)
+        show(reason ?: "Transcribing…", if (reason == null) Tone.Active else Tone.Warn)
+    }
+
     override fun onTranscript(result: Dictation.Transcript?) {
-        // The recording may have stopped by itself (another app took the microphone).
-        if (::mic.isInitialized) mic.recording = false
         setState(State.Idle)
         when {
             result == null -> show("Couldn't turn that into text. Please try again.", Tone.Warn)
-            result.raw.isEmpty() -> show("Didn't catch anything. Hold the mic and speak.", Tone.Muted)
+            result.raw.isEmpty() -> show("Didn't catch anything. Tap the mic and speak.", Tone.Muted)
             else -> insert(result)
         }
     }
-
     private fun insert(result: Dictation.Transcript) {
         val ic = currentInputConnection ?: return show("Tap a text box first.", Tone.Warn)
         if (field.password) return show("Dictation is off in password fields", Tone.Warn)
@@ -385,18 +332,32 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         }
         mic.alpha = if (field.password) 0.4f else 1f
         if (state == State.Idle) {
-            if (field.password) show("Dictation is off in password fields", Tone.Muted) else show("Hold the mic and speak · offline", Tone.Muted)
+            if (field.password) show("Dictation is off in password fields", Tone.Muted) else show("Tap the mic and speak · offline", Tone.Muted)
         }
     }
 
     private fun setState(value: State) {
         state = value
         if (!::hint.isInitialized) return
+        mic.recording = value == State.Recording
+        mic.transcribing = value == State.Transcribing
+        cancelKey.visibility = if (value == State.Recording) View.VISIBLE else View.GONE
+        main.removeCallbacks(clock)
         hint.text = when (value) {
-            State.Idle -> "Hold to talk · tap for hands-free"
-            State.Holding -> "Release to write · slide up to cancel"
-            State.HandsFree -> "Tap the mic when you're done"
-            State.Finishing -> "Writing…"
+            State.Idle -> "Tap to talk"
+            State.Recording -> "0:00 · tap when you're done"
+            State.Transcribing -> "Transcribing…"
+        }
+        if (value == State.Recording) main.postDelayed(clock, 1000)
+    }
+
+    /** "0:07 · tap when you're done" while recording. */
+    private val clock = object : Runnable {
+        override fun run() {
+            if (state != State.Recording) return
+            val s = (SystemClock.elapsedRealtime() - startedAt) / 1000
+            hint.text = "${s / 60}:${"%02d".format(s % 60)} · tap when you're done"
+            main.postDelayed(this, 1000 - (SystemClock.elapsedRealtime() - startedAt) % 1000)
         }
     }
 
@@ -419,7 +380,4 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         if (prefs.haptics && ::mic.isInitialized) mic.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    companion object {
-        private const val TAP_MS = 300L
-    }
 }

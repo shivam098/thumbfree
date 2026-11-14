@@ -42,13 +42,13 @@ if (!sherpaAar.isFile || sha256(sherpaAar) != sherpaSha256) {
 
 android {
     namespace = "app.thumbfree"
-    compileSdk = 35
+    compileSdk = 36
     System.getenv("ANDROID_NDK_VERSION")?.let { ndkVersion = it }
 
     defaultConfig {
         applicationId = "app.thumbfree.android"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

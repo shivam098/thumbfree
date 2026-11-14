@@ -208,7 +208,7 @@ class SetupActivity : Activity() {
 
         column.addView(heading("Try it"))
         column.addView(EditText(this).apply {
-            hint = "Tap here, switch to ThumbFree, hold the mic and talk"
+            hint = "Tap here, switch to ThumbFree, tap the mic and talk"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             minLines = 3
             gravity = Gravity.TOP or Gravity.START

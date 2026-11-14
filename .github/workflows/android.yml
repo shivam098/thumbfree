@@ -55,7 +55,7 @@ jobs:
       - name: Use the runner's NDK
         run: echo "ANDROID_NDK_VERSION=$(basename "$ANDROID_NDK_LATEST_HOME")" >> "$GITHUB_ENV"
       - name: Build
-        run: ./gradlew :app:assembleDebug :app:assembleStandardDebugAndroidTest :app:assembleBubbleDebugAndroidTest :app:assembleRelease --console=plain
+        run: ./gradlew :app:assembleDebug :app:assembleStandardDebugAndroidTest :app:assembleBubbleDebugAndroidTest :app:assembleRelease :app:bundleBubbleRelease --console=plain
       - name: Sizes
         run: find app/build/outputs/apk -name '*.apk' -exec ls -l {} +
       - uses: actions/upload-artifact@v4

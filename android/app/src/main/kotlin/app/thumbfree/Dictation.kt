@@ -22,6 +22,12 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
         /** Something to show instead of the preview (the microphone went silent, the model didn't load…). */
         fun onWarning(message: String) {}
 
+        /**
+         * Recording has stopped and the transcript is being made. [reason] is set when it stopped by itself (the 10-minute
+         * limit, or the system took the microphone): show it instead of a plain "Transcribing…".
+         */
+        fun onFinishing(reason: String?) {}
+
         /** The final transcript (raw text is "" when nothing was said), or null if it couldn't be made. */
         fun onTranscript(result: Transcript?)
     }
@@ -66,9 +72,8 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
             onEnded = {
                 main.post {
                     if (s == session && recorder != null) {
-                        listener.onWarning("The microphone was taken by another app. Writing what you said so far…")
                         app.notifier.interrupted()
-                        finish()
+                        finish("The microphone was taken by another app. Transcribing what you said so far…")
                     }
                 }
             },
@@ -116,8 +121,7 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
                 listener.onPreview(lastPreview)
             }
             if (rec.full) {
-                listener.onWarning("That's the 10-minute limit. Writing it now…")
-                finish()
+                finish("That's the 10-minute limit. Transcribing it now…")
                 return
             }
             if (previewAllowed && !previewBusy && rec.samples - p.committedSamples >= Recorder.RATE / 2) {
@@ -142,7 +146,7 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
     }
 
     /** Stops recording and makes the final transcript (delivered to the listener). */
-    fun finish() {
+    fun finish(reason: String? = null) {
         val rec = recorder ?: return
         val spec = spec ?: return
         recorder = null
@@ -152,6 +156,7 @@ class Dictation(private val app: ThumbFreeApp, private val listener: Listener) {
         val audio = rec.stop()
         clearSilentAlert()
         app.engine.abort() // stop a preview in progress; the final pass resumes the model
+        listener.onFinishing(reason)
         val s = session
         val words = vocabulary
         app.engine.run {

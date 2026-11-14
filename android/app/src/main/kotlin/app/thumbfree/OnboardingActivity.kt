@@ -124,10 +124,32 @@ class OnboardingActivity : Activity() {
         if (step == Step.Microphone && micGranted()) next() else if (step == Step.Notifications) next() else render()
     }
 
-    @Deprecated("Back goes to the previous step")
-    override fun onBackPressed() {
+    /** Android 13 and later (and always when targeting Android 16): back goes through this callback, not onBackPressed. */
+    private var backCallback: Any? = null
+
+    /** Back steps through the guide; on the first step it leaves as usual. */
+    private fun updateBack() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val wanted = steps.indexOf(step) > 0
+        val callback = backCallback as android.window.OnBackInvokedCallback?
+        if (wanted && callback == null) {
+            val cb = android.window.OnBackInvokedCallback { goBack() }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb)
+            backCallback = cb
+        } else if (!wanted && callback != null) {
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
+            backCallback = null
+        }
+    }
+
+    private fun goBack() {
         val i = steps.indexOf(step)
-        if (i <= 0) @Suppress("DEPRECATION") super.onBackPressed() else go(steps[i - 1])
+        if (i > 0) go(steps[i - 1])
+    }
+
+    @Deprecated("Back goes to the previous step (Android 12 and earlier)")
+    override fun onBackPressed() {
+        if (steps.indexOf(step) <= 0) @Suppress("DEPRECATION") super.onBackPressed() else goBack()
     }
 
     private fun next() = steps.indexOf(step).let { i -> if (i + 1 < steps.size) go(steps[i + 1]) else done() }
@@ -147,6 +169,7 @@ class OnboardingActivity : Activity() {
 
     private fun render() {
         if (!::content.isInitialized) return
+        updateBack()
         progress.removeAllViews()
         val at = steps.indexOf(step)
         steps.forEachIndexed { i, _ ->
@@ -189,6 +212,7 @@ class OnboardingActivity : Activity() {
         line("ThumbFree turns speech into clean, punctuated text in any app, entirely on this phone.")
         point("🔒", "Your voice never leaves this phone", "Speech is recognised right here. No account, no cloud, no recordings sent anywhere.")
         point("✈️", "Works offline", "On a plane, in the metro, with no signal: it's just as fast.")
+        point("👆", "Tap, talk, tap", "Tap the mic and speak, watching your words appear. Tap again and it's typed. Nothing to hold.")
         point("✍️", "Writes like you meant to", "No ums or “thik hai na”, punctuation added, emails and lists laid out for you.")
         point("🇮🇳", "English and Hinglish", "Hindi + English, typed in Roman letters.")
         primary("Get started") { next() }
@@ -196,7 +220,7 @@ class OnboardingActivity : Activity() {
 
     private fun microphone() {
         title("Let ThumbFree hear you")
-        line("The microphone is on only while you dictate: while you hold the mic, or until you tap it again. Audio stays in memory and is turned into text on this phone.")
+        line("The microphone is on only while you dictate: from when you tap the mic until you tap it again. Audio stays in memory and is turned into text on this phone.")
         if (micGranted()) {
             done("Microphone allowed")
             primary("Next") { next() }
@@ -272,7 +296,7 @@ class OnboardingActivity : Activity() {
 
     private fun practice(heading: String, say: String, email: Boolean, success: (String) -> Boolean, well: String) {
         title(heading)
-        line("Tap the box, switch to the ThumbFree keyboard (or use the bubble) and say:", muted = true)
+        line("Tap the box and switch to the ThumbFree keyboard" + (if (BuildConfig.HAS_BUBBLE) " (or use the bubble)" else "") + ". Tap the mic, say this, then tap it again:", muted = true)
         line("“$say”").apply { setTypeface(typeface, Typeface.ITALIC) }
         val result = TextView(this).apply {
             textSize = 16f

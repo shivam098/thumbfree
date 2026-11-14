@@ -41,9 +41,16 @@ internal fun Context.key(label: String, description: String, onClick: (View) -> 
 class MicButton(context: Context) : View(context) {
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val stop = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt() }
     private val icon = context.getDrawable(R.drawable.ic_mic)!!.mutate()
+    private val box = android.graphics.RectF()
     private var shown = 0f
 
+    /** Listening: red, a stop square, and a ring that grows with your voice. */
     var recording = false
         set(value) {
             field = value
@@ -51,6 +58,15 @@ class MicButton(context: Context) : View(context) {
                 level = 0f
                 shown = 0f
             }
+            describe()
+            invalidate()
+        }
+
+    /** After you stop: a spinning arc until the text is written. */
+    var transcribing = false
+        set(value) {
+            field = value
+            describe()
             invalidate()
         }
 
@@ -61,9 +77,17 @@ class MicButton(context: Context) : View(context) {
         }
 
     init {
-        contentDescription = "Microphone. Hold to dictate; tap for hands-free."
         isClickable = true
         isFocusable = true
+        describe()
+    }
+
+    private fun describe() {
+        contentDescription = when {
+            recording -> "Listening. Tap to finish."
+            transcribing -> "Transcribing"
+            else -> "Microphone. Tap to dictate."
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -80,9 +104,26 @@ class MicButton(context: Context) : View(context) {
             if (kotlin.math.abs(shown - min(level * 8f, 1f)) > 0.01f) postInvalidateOnAnimation()
         }
         fill.color = color
+        if (transcribing) fill.alpha = 150
         canvas.drawCircle(cx, cy, radius, fill)
+        if (recording) {
+            val side = radius * 0.34f
+            box.set(cx - side, cy - side, cx + side, cy + side)
+            canvas.drawRoundRect(box, side * 0.25f, side * 0.25f, stop)
+            return
+        }
         val half = (radius * 0.5f).toInt()
+        icon.alpha = if (transcribing) 170 else 255
         icon.setBounds(cx.toInt() - half, cy.toInt() - half, cx.toInt() + half, cy.toInt() + half)
         icon.draw(canvas)
+        if (transcribing) {
+            val r = radius * 1.14f
+            arc.color = context.color(R.color.tf_accent)
+            arc.strokeWidth = radius * 0.09f
+            box.set(cx - r, cy - r, cx + r, cy + r)
+            val start = (android.os.SystemClock.uptimeMillis() % 900L) / 900f * 360f
+            canvas.drawArc(box, start, 110f, false, arc)
+            postInvalidateOnAnimation()
+        }
     }
 }
