@@ -86,6 +86,35 @@ class ScreensOnDeviceTest {
     }
 
     @Test
+    fun history_lists_dictations_and_copies_one() {
+        val app = context.thumbFree
+        app.prefs.keepHistory = true
+        app.history.clear()
+        app.history.add("Please send me the latest build logs.", "com.whatsapp")
+        Thread.sleep(5)
+        app.history.add("Hey Tim,\n\nAre you free on Friday?\n\nThanks,\nBen", "com.google.android.gm")
+        val deadline = System.currentTimeMillis() + 5_000
+        while (app.history.entries().size < 2 && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        assertEquals("Hey Tim,\n\nAre you free on Friday?\n\nThanks,\nBen", app.history.entries().first().text)
+        ActivityScenario.launch(HistoryActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val rows = ArrayList<android.view.View>()
+                activity.window.decorView.findViewsWithText(rows, "Tap to copy", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                assertEquals(2, rows.size)
+                rows.last().performClick()
+                val clip = context.getSystemService(android.content.ClipboardManager::class.java).primaryClip
+                assertEquals("Please send me the latest build logs.", clip?.getItemAt(0)?.text?.toString())
+            }
+        }
+        app.prefs.keepHistory = false
+        app.history.add("not kept", "")
+        Thread.sleep(300)
+        assertTrue(app.history.entries().none { it.text == "not kept" })
+        app.prefs.keepHistory = true
+        app.history.clear()
+    }
+
+    @Test
     fun first_launch_shows_the_guide() {
         context.thumbFree.prefs.onboarded = false
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->

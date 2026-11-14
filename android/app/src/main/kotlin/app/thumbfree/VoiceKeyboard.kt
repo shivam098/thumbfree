@@ -35,6 +35,8 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     private var state = State.Idle
     private var field = FieldInfo(password = false, search = false, multiLine = true, private = false)
     private var email = false
+    /** The app whose text box this is (for History). */
+    private var fieldApp: String? = null
     private var editorAction = EditorInfo.IME_ACTION_UNSPECIFIED
     private var noEnterAction = false
     private var lastText: String? = null
@@ -112,7 +114,7 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         add(key("⌨", "Switch keyboard") { switchKeyboard() }.apply { setOnLongClickListener { showPicker(); true } }, 1f)
         languageKey = key("EN", "Dictation language") { toggleLanguage() }.apply { textSize = 14f }
         add(languageKey, 1.3f)
-        add(key("↺", "Insert the last dictation again") { insertAgain() }, 1f)
+        add(key("↺", "Insert the last dictation again. Hold for History.") { insertAgain() }.apply { setOnLongClickListener { openHistory(); true } }, 1f)
         add(key("space", "Space") { commit(" ") }.apply { textSize = 14f }, 2.6f)
         val back = key("⌫", "Delete") { deleteOne() }
         back.setOnTouchListener { v, e ->
@@ -143,6 +145,7 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         super.onStartInputView(info, restarting)
         field = FieldInfo.of(info.inputType, info.imeOptions)
         email = Compose.isEmail(info.packageName, info.privateImeOptions)
+        fieldApp = info.packageName
         editorAction = info.imeOptions and EditorInfo.IME_MASK_ACTION
         noEnterAction = (info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
         refresh()
@@ -166,16 +169,19 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     private fun leaveField() {
         if (state == State.Recording || state == State.Transcribing) {
             val private = field.private
+            val pkg = fieldApp
             clearLive()
-            dictation.detach { result -> saveOrphan(result, private) }
+            dictation.detach { result -> saveOrphan(result, private, pkg) }
         }
         liveComposing = false
         setState(State.Idle)
     }
 
-    private fun saveOrphan(result: Dictation.Transcript?, private: Boolean) {
+    private fun saveOrphan(result: Dictation.Transcript?, private: Boolean, packageName: String?) {
         val text = result?.raw?.takeIf { it.isNotEmpty() }?.let { Compose.standalone(prefs, it) }
-        if (!text.isNullOrEmpty() && !private) app.notifier.undelivered(text, "Your dictation wasn't typed: the text box closed.")
+        if (text.isNullOrEmpty() || private) return
+        app.notifier.undelivered(text, "Your dictation wasn't typed: the text box closed.")
+        app.history.add(text, packageName)
     }
 
     // ---- dictation: tap to start, tap again to finish ----
@@ -317,7 +323,10 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         liveComposing = false
         if (liveLost) {
             val text = Compose.text(prefs, result.raw, liveBefore, field, email)
-            if (!field.private) lastText = text
+            if (!field.private) {
+                lastText = text
+                app.history.add(text, fieldApp)
+            }
             return show("You moved the cursor, so the rest wasn't typed. Tap ↺ to insert the whole dictation.", Tone.Warn)
         }
         // With live text in the box, the text before it is what it was when you started; commitText replaces the live text.
@@ -333,6 +342,7 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
         ic.commitText(Insertion.withSpacing(before, text), 1)
         if (!field.private) {
             lastText = text
+            app.history.add(text, fieldApp)
             if (prefs.shareSamples) app.samples.save(result, text, prefs.language.name)
         }
         show(text, Tone.Ok)
@@ -380,7 +390,7 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
 
     private fun insertAgain() {
         if (liveBusy()) return
-        val text = lastText ?: return show("Nothing dictated yet", Tone.Muted)
+        val text = lastText ?: return show("Nothing dictated yet. Hold ↺ for History.", Tone.Muted)
         val ic = currentInputConnection ?: return
         ic.commitText(Insertion.withSpacing(ic.getTextBeforeCursor(200, 0), Insertion.forField(text, field)), 1)
     }
@@ -405,6 +415,11 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     private fun showPicker() = getSystemService(InputMethodManager::class.java).showInputMethodPicker()
 
     private fun openSetup() = startActivity(Intent(this, SetupActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+    private fun openHistory() {
+        if (state != State.Idle) return
+        startActivity(Intent(this, HistoryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
 
     // ---- ui ----
 

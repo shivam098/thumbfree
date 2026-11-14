@@ -17,6 +17,8 @@ servers; ThumbFree never does.
 - **Works with any keyboard**: use the ThumbFree voice keyboard, or keep Gboard and tap the floating **bubble**.
 - **Never lose a dictation**: you're told straight away if a call or another app takes the microphone, and a
   dictation that can't be typed is kept in a notification for you to copy.
+- **History**: your dictations from the last 30 days, on the phone only. Tap one to copy it (Settings › History, or hold
+  ↺ on the keyboard). Clear it or turn it off any time.
 - **Live typing**: words appear in the text box as you speak, like Gboard on a Pixel, on any phone and offline. Pick
   the **Live** English model (79 MB); the finished text replaces them when you tap the mic again.
 - **English and Hinglish**: English on a Kroko streaming model (Live) or NVIDIA Parakeet TDT (110M Standard, 0.6B for the best accuracy); Hindi +
@@ -73,7 +75,9 @@ Settings.
 - **Help improve ThumbFree** is off unless you choose it. When on, your dictations (audio, recognised text, typed text)
   from the ThumbFree keyboard are kept on the phone (never from password or incognito fields, never from the bubble), and are sent only if you tap **Share** and pick
   where they go. **Delete all** removes them.
-- Settings are not included in cloud backups.
+- **History** keeps the text (not the audio) of your last 30 days of dictations on the phone so you can copy them
+  again. Never from password fields, nor incognito fields with the keyboard. Clear it or turn it off in History.
+- Settings and History are not included in cloud backups.
 
 ### Google Play
 

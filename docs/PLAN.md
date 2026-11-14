@@ -37,7 +37,7 @@ App IDs: `app.thumbfree.android`, `app.thumbfree.ios` (with `app.thumbfree.ios.k
 
 ## 3. Feature reference (built on Android, copy to every platform)
 
-Each feature below shipped on Android between v0.1 and v0.6. It came from testing on a Pixel 11 and comparing with
+Each feature below shipped on Android between v0.1 and v0.7. It came from testing on a Pixel 11 and comparing with
 Wispr Flow's onboarding. The rules are written so the iPhone, Mac and Windows apps behave identically. **Shared test
 data proves it:** every port must pass `tests/vectors/formatter.tsv` and `tests/vectors/layout.tsv` on the device
 itself, not just on a computer, because regex engines differ.
@@ -270,9 +270,36 @@ and checks that text arrives while speaking, that it keeps up with real time, th
 Real-phone checks: Messages, WhatsApp, Gmail, Chrome's address bar (a field that handles composing text differently),
 moving the cursor mid-dictation, switching apps mid-dictation.
 
+### 3.11 History: every dictation, kept locally, tap to copy (every platform)
+
+Like Wispr Flow's history, but **only on the device**. It's the safety net for live typing and the bubble: whatever
+happened in the other app, the words are here.
+
+- **What's kept:** the final text (not audio), the app it was for and the time. Typed dictations, ones that went to the
+  tap-to-copy notification, and ones cut short because the cursor moved. **30 days, at most 500**, newest first. Stored
+  as one line per entry (`time<TAB>app<TAB>text`, escaped), with the format and pruning in the shared core (`History`) so
+  every platform reads it the same way.
+- **Never kept:** password / secure fields. Fields marked private where the platform says so (Android keyboard:
+  `IME_FLAG_NO_PERSONALIZED_LEARNING`; iPhone: secure fields never reach a custom keyboard). Where the platform can't
+  tell (the Android bubble, Mac, Windows), only passwords are excluded: History is local text the person can clear or
+  turn off, unlike voice samples (3.8), which exist to be shared and so stay keyboard-only.
+- **On by default**, with a **Keep history** switch. Turning it off deletes everything, after a confirmation.
+  **Clear history** deletes all of it. Excluded from cloud backups. Uninstalling removes it.
+- **Screen:** a list of cards (the text, up to 6 lines; "WhatsApp · 2 minutes ago"). **Tap copies** to the clipboard.
+  Hold for Copy / Share / Delete. Search appears once there are more than three. Hidden from the recent-apps preview
+  (Android 13+).
+- **Where to open it:** Settings › History, and hold ↺ on the keyboard.
+
+| Platform | Storage | Opened from | Status |
+|---|---|---|---|
+| Android | `noBackupFilesDir/history.txt`, written on its own thread | Settings, hold ↺ on the keyboard | **Built (v0.7)** |
+| iPhone | App Group container (the keyboard writes, the app shows), `NSFileProtectionComplete`, excluded from iCloud backup | The app, and a History key on the keyboard (it can insert as well as copy) | Design |
+| Mac | `~/Library/Application Support/ThumbFree/history.txt`, excluded from Time Machine | The menu-bar menu ("History…", the last 5 inline: click copies) | Design |
+| Windows | `%LOCALAPPDATA%\ThumbFree\history.txt` (reuse the History tab of the Voice Assistant 0.9 app window, with this format and these rules) | Tray menu and the app window | Design |
+
 ## 4. Platform designs
 
-### 4.1 Android (built: v0.6.0)
+### 4.1 Android (built: v0.7.0)
 
 Native Kotlin. sherpa-onnx (Parakeet) and whisper.cpp (two CPU builds: ARMv8.0 and ARMv8.2) through JNI. Views are
 built in code, with no UI libraries. APK: 27.6 MB.
@@ -429,13 +456,14 @@ thumbfree/
 | **Android 0.1–0.4** ✅ | Keyboard, Parakeet + Whisper, word list, emails/lists/corrections, bubble, notifications, guide, opt-in samples | Released v0.4.0; CI: core tests, APK build, emulator tests (formatter + layout vectors, both engines, every guide screen) |
 | **Android 0.5** ✅ | Tap to start / tap to finish with listening and transcribing states (3.0); standard + bubble editions; Android 16 target and a Play app bundle | Released v0.5.0 |
 | **Android 0.6** ✅ | Live typing (3.10): Kroko streaming English tier, composing text in the keyboard, faster live Hinglish | Released v0.6.0 |
-| **Android 0.7** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then Google Play: internal test, then a closed test (12+ testers for 14 days, required for new personal accounts), then production | Bubble works in the top 10 apps; Play listing approved |
+| **Android 0.7** ✅ | History (3.11): every dictation kept locally for 30 days, tap to copy | Released v0.7.0 |
+| **Android 0.8** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then Google Play: internal test, then a closed test (12+ testers for 14 days, required for new personal accounts), then production | Bubble works in the top 10 apps; Play listing approved |
 | **Apple spike** (week 1) | (a) The `android/core` KMP framework passing both vector files on the iOS Simulator and macOS; (b) iPhone: keyboard Start → app session → swipe back → mic in the keyboard → text inserted, on a real iPhone; (c) Parakeet 110M speed on iPhone and Mac | All three work, or the fallback (Swift port, different session design) is chosen |
 | **iPhone 0.x** (weeks 2–5) | Keyboard + app session, models, guide, notifications, Shortcuts action, opt-in samples | TestFlight with the acceptance list (Messages, WhatsApp, Mail, Notes, Safari) |
 | **Mac 0.x** (weeks 4–7) | Menu bar, hotkey, pill, paste with the same-field check, guide, optional floating mic | Notarized `.dmg`; acceptance on a real Mac (Notes, Mail, Safari, Chrome, Slack, VS Code, Terminal) |
 | **Windows live typing** | Kroko through the sherpa-onnx C# API; phrases typed at pauses, the partial in the pill (3.10); a Live / Standard model choice | Real-app labs (Notepad, Word, Teams, browser, VS Code) |
 | **Windows 1.0** | Section 3 features on top of Voice Dictation 0.3; archive `windows-dictation` | Real-app labs pass; winget |
-| **Later** | Auto language pick (English word overlap ≥ 0.5 in 16/17 English clips, 0/6 Hinglish); learn from corrections; NPU / Neural Engine for Apex; History (opt-in) | |
+| **Later** | Auto language pick (English word overlap ≥ 0.5 in 16/17 English clips, 0/6 Hinglish); learn from corrections; NPU / Neural Engine for Apex | |
 
 One product version across platforms; release assets per platform.
 

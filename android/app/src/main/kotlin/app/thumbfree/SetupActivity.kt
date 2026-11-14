@@ -190,6 +190,16 @@ class SetupActivity : Activity() {
         }
         column.addView(dictionary)
 
+        column.addView(heading("History"))
+        column.addView(
+            text(
+                "Your dictations from the last 30 days, on this phone only, to copy again. Never from password fields " +
+                    "(nor incognito ones, with the keyboard). Also: hold ↺ on the keyboard.",
+                13f, muted = true,
+            ).spaced(0, 6),
+        )
+        column.addView(button("Open history") { startActivity(Intent(this, HistoryActivity::class.java)) })
+
         column.addView(heading("Help improve ThumbFree"))
         column.addView(
             text(

@@ -50,6 +50,8 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
 
     /** The text box the current dictation is for. */
     private var target: AccessibilityNodeInfo? = null
+    /** Its app, kept for History even if the text box goes away. */
+    private var targetApp: String? = null
     /** Long-pressed away: hidden until focus moves to another text box. */
     private var dismissed: AccessibilityNodeInfo? = null
     private var waitingForMic = false
@@ -258,6 +260,7 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
             return
         }
         target = field
+        targetApp = field.packageName?.toString()
         waitingForMic = true
         say("Starting…")
         if (!MicService.start(this)) onMicReady(false)
@@ -325,6 +328,7 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
             node == null || node.isPassword -> {
                 val text = Compose.standalone(app.prefs, result.raw)
                 app.notifier.undelivered(text, "The text box closed before your dictation was ready.")
+                if (node == null) app.history.add(text, targetApp)
                 say("Saved in your notifications: the text box closed", 3500)
             }
             else -> type(node, result)
@@ -348,10 +352,13 @@ class BubbleService : AccessibilityService(), Dictation.Listener {
         val spaced = Insertion.withSpacing(before, text)
 
         if (setText(node, existing, start, end, spaced) || paste(node, spaced)) {
-            // No samples from the bubble: another app's field can't say whether it's incognito.
+            // No samples from the bubble: another app's field can't say whether it's incognito. History is text only,
+            // stays on the phone and can be cleared or turned off, so bubble dictations are kept (never passwords).
+            app.history.add(text, node.packageName?.toString())
             say(text, 2500)
         } else {
             app.notifier.undelivered(text, "This app didn't accept the text.")
+            app.history.add(text, node.packageName?.toString())
             say("This app didn't accept the text. It's in your notifications.", 4000)
         }
     }
