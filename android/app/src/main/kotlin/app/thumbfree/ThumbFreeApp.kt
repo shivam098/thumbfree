@@ -7,13 +7,14 @@ import android.os.Looper
 import app.thumbfree.core.DictationOptions
 import app.thumbfree.core.Language
 import app.thumbfree.core.ModelCatalog
+import app.thumbfree.core.ModelSpec
 import app.thumbfree.core.PersonalDictionary
 import app.thumbfree.core.Tier
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
 class ThumbFreeApp : Application() {
-    val prefs by lazy { Prefs(this) }
+    val prefs by lazy { Prefs(this) { spec -> models.isInstalled(spec) } }
     val models by lazy { ModelStore(this) }
     val engine by lazy { SpeechEngine { spec -> models.folder(spec) } }
     val notifier by lazy { Notifier(this) }
@@ -39,7 +40,7 @@ class ThumbFreeApp : Application() {
 val Context.thumbFree: ThumbFreeApp get() = applicationContext as ThumbFreeApp
 
 /** Settings, stored on this phone only (excluded from backups). */
-class Prefs(context: Context) {
+class Prefs(context: Context, private val isInstalled: (ModelSpec) -> Boolean = { false }) {
     private val sp = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     var language: Language
@@ -48,12 +49,12 @@ class Prefs(context: Context) {
 
     /**
      * English model: Live types as you speak, Standard and Accurate type when you finish. Before 0.6 this was an
-     * "accurate" switch; people who already set up keep the model they downloaded, new people start on Live.
+     * "accurate" switch; people who already have the Standard model keep it, new people start on Live.
      */
     var englishTier: Tier
         get() = tier("english_tier") ?: when {
             sp.getBoolean("accurate_english", false) -> Tier.Accurate
-            onboarded -> Tier.Standard
+            isInstalled(ModelCatalog.EnglishFast) -> Tier.Standard
             else -> Tier.Live
         }.also { englishTier = it } // decided once, so finishing the guide doesn't change it
         set(value) = sp.edit().putString("english_tier", value.name).apply()

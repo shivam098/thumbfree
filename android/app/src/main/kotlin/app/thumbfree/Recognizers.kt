@@ -168,7 +168,7 @@ class StreamingRecognizer private constructor(
                 partial = ""
             }
             close()
-            LiveText.join(finished, "")
+            LiveText.endSentence(LiveText.join(finished, ""))
         }
 
         fun close() = synchronized(lock) {

@@ -168,6 +168,10 @@ class CoreTest {
         assertEquals("send the logs", LiveText.mergePunctuation(" send the logs ", ""))
         assertEquals("One. Two three", LiveText.join(listOf("One."), " two three ").replace("two", "Two"))
         assertEquals("One.", LiveText.join(listOf("One."), ""))
+        assertEquals("Please send me the latest build logs.", LiveText.endSentence("Please send me the latest build logs, "))
+        assertEquals("Are you free?", LiveText.endSentence("Are you free?"))
+        assertEquals("Meet at 4 pm.", LiveText.endSentence("Meet at 4 pm"))
+        assertEquals("", LiveText.endSentence(""))
     }
 
     @Test

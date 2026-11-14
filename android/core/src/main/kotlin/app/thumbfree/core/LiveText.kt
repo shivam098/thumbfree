@@ -34,4 +34,13 @@ object LiveText {
     /** The text so far: finished phrases, then the phrase in progress. */
     fun join(finished: List<String>, partial: String): String =
         (finished + partial.trim()).filter { it.isNotEmpty() }.joinToString(" ")
+
+    /**
+     * The end of a dictation is the end of a sentence: a phrase cut at a pause may end in a comma (or nothing), which
+     * becomes a full stop. Text already ending in . ? ! (or a symbol) is left alone.
+     */
+    fun endSentence(text: String): String {
+        val t = text.trimEnd().trimEnd(',', ';', ':').trimEnd()
+        return if (t.isNotEmpty() && t.last().isLetterOrDigit()) "$t." else t
+    }
 }
