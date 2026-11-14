@@ -7,10 +7,11 @@ it again: cleaned-up text is typed where the cursor is. Speech recognition runs 
 
 | Language | Model | Download | Engine |
 |---|---|---|---|
-| English | NVIDIA Parakeet TDT 110M, int8 (default) | 137 MB | sherpa-onnx + ONNX Runtime |
-| English, accurate | NVIDIA Parakeet TDT 0.6B v2, int8 (best on the Open ASR leaderboard; no live preview) | 661 MB | sherpa-onnx + ONNX Runtime |
+| English, live (default for new installs) | Kroko streaming Zipformer (Banafo, CC BY-SA 4.0) + Edge-Punct-Casing punctuation (Apache-2.0): types as you speak | 79 MB | sherpa-onnx + ONNX Runtime |
+| English, standard | NVIDIA Parakeet TDT 110M, int8 | 137 MB | sherpa-onnx + ONNX Runtime |
+| English, accurate | NVIDIA Parakeet TDT 0.6B v2, int8 (best on the Open ASR leaderboard; types when you finish) | 661 MB | sherpa-onnx + ONNX Runtime |
 | Hindi + English | Oriserve Whisper-Hindi2Hinglish-Swift (Whisper base), q8 | 82 MB | whisper.cpp |
-| Hindi + English, accurate | Oriserve Whisper-Hindi2Hinglish-Apex (large-v3-turbo), q8 (no live preview) | 874 MB | whisper.cpp |
+| Hindi + English, accurate | Oriserve Whisper-Hindi2Hinglish-Apex (large-v3-turbo), q8 (types when you finish) | 874 MB | whisper.cpp |
 
 Why two engines: Parakeet is more accurate than Whisper models of similar size for English, much faster (no fixed 30 s
 window to pad to) and adds punctuation and capitals itself, but it has no Hindi. Nothing open beats the Oriserve
@@ -30,7 +31,7 @@ android/
                  Picked at run time from /proc/cpuinfo, with the generic build as fallback.
   app/           The keyboard (VoiceKeyboard), the bubble (BubbleService + MicService), the first-run guide
                  (OnboardingActivity), settings (SetupActivity), the shared dictation controller (Dictation), the
-                 recognizers (Whisper and Parakeet behind one interface), the recorder, notifications, opt-in samples
+                 recognizers (Whisper, Parakeet and the Kroko streaming model behind one interface), the recorder, notifications, opt-in samples
                  and model downloads. Views are built in code: no AppCompat, Compose or other UI libraries, so the
                  keyboard opens fast. sherpa-onnx comes from its official AAR (2.0.1, ONNX Runtime linked in),
                  downloaded by Gradle and pinned by SHA-256.
@@ -44,10 +45,21 @@ tests/audio/                  short speech clips for the on-device tests
 
 1. **Tap the mic.** It turns red with a stop square, a ring follows your voice level and a timer runs. `Recorder` opens the microphone (`AudioRecord`, `VOICE_RECOGNITION`, 16 kHz mono float) on a
    high-priority thread. The model loads in the background on the single "speech" thread if it isn't loaded yet.
-2. **While you talk** (optional live preview), every ~0.9 s `LivePreview` re-transcribes the newest audio (Whisper
-   with a small audio context sized to the clip). Audio older than 10 s is transcribed once, cut at a pause and kept,
-   so updates never grow with the length of the dictation.
-3. **Tap again** (or ✕ to cancel). The mic shows a spinning "Transcribing…" state until the text is written. Any preview still running is aborted. The recording is trimmed to the speech (energy-based detection
+2. **While you talk** (Live typing, on by default) the words go into the text box as underlined composing text
+   (`setComposingText`), spaced from the text that was before the cursor when you started. They are cleaned up by the
+   formatter but not laid out yet.
+   - **Live model (Kroko):** `Recorder` hands every 100 ms of audio to a `StreamingRecognizer.Session` on the speech
+     thread, which returns the text so far. A phrase ends after a 0.8 s pause and then gets punctuation from a small
+     model; only its punctuation is kept, the recognizer's own words and capitals stay (`LiveText.mergePunctuation`).
+   - **Other models:** every ~0.5 s (0.9 s with Live typing off, where the words show only on the keyboard)
+     `LivePreview` re-transcribes the newest audio (Whisper with a small audio context sized to the clip). Audio older
+     than 10 s is transcribed once, cut at a pause and kept, so updates never grow with the length of the dictation.
+     The accurate models skip this.
+   - Tapping elsewhere in the box ends the live text: it stays as it is and the dictation isn't typed a second time
+     (↺ inserts it). The keyboard's own keys wait until you finish.
+3. **Tap again** (or ✕ to cancel, which removes the live text). With the Live model the session already has
+   everything, so the final text is ready at once. Otherwise the mic shows a spinning "Transcribing…" state until the
+   text is written. Any preview still running is aborted. The recording is trimmed to the speech (energy-based detection
    with 250 ms margins), split at pauses into pieces (at most 30 s for Parakeet, 14 s for Whisper), and each piece is
    transcribed with the full-quality settings. The accurate Hinglish model also gets your "words I use often" list as a
    prompt; the fast one doesn't (it was measured to garble the output), and Parakeet can't take one (sherpa-onnx
@@ -63,7 +75,7 @@ tests/audio/                  short speech clips for the on-device tests
    email apps, or anywhere when there's both a greeting and a signed-off name) and a spoken list into bullets ("bullet
    point …", "first … second … third …", or a list heading such as "Things to do today:" followed by three or more
    items). It is deliberately conservative; `tests/vectors/layout.tsv` holds the cases that must stay unchanged too.
-6. **Insert** with `InputConnection.commitText`, adding a space if needed. In single-line fields new lines become
+6. **Insert** with `InputConnection.commitText` (which replaces the live text), adding a space if needed. In single-line fields new lines become
    spaces. Password fields are refused.
 7. After 3 idle minutes the model is unloaded to give the memory back.
 

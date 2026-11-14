@@ -137,6 +137,10 @@ class CoreTest {
         assertEquals(4, Decoding.threads(8))
         assertEquals(2, Decoding.threads(2))
         assertEquals(ModelCatalog.Hinglish, ModelCatalog.forLanguage(Language.Hinglish, accurate = false))
+        assertEquals(ModelCatalog.EnglishLive, ModelCatalog.forLanguage(Language.English, Tier.Live))
+        assertEquals(ModelCatalog.Hinglish, ModelCatalog.forLanguage(Language.Hinglish, Tier.Live))
+        assertTrue(ModelCatalog.EnglishLive.streaming)
+        assertEquals(78_693_144L, ModelCatalog.EnglishLive.bytes)
         assertEquals(ModelCatalog.HinglishAccurate, ModelCatalog.forLanguage(Language.Hinglish, accurate = true))
         assertEquals(ModelCatalog.EnglishAccurate, ModelCatalog.forLanguage(Language.English, accurate = true))
         assertFalse(ModelCatalog.Hinglish.promptVocabulary)
@@ -147,6 +151,27 @@ class CoreTest {
         assertEquals(SpeechAudio.SAMPLE_RATE * 30, ModelCatalog.EnglishFast.maxPieceSamples)
         assertEquals("parakeet-tdt-110m/tokens.txt", ModelCatalog.EnglishFast.file("tokens.txt").path)
         assertEquals(ModelCatalog.all.sumOf { it.files.size }, ModelCatalog.knownPaths.size)
+    }
+
+    @Test
+    fun live_text_keeps_the_recognizers_capitals_and_takes_the_punctuation() {
+        assertEquals(
+            "I tested it on YouTube videos of different genres.",
+            LiveText.mergePunctuation("I tested it on YouTube videos of different genres", "I tested it on YOUTUBE videos of different genres."),
+        )
+        assertEquals(
+            "Hey, Tim would love to connect. Are you available on Friday? Thanks, Ben",
+            LiveText.mergePunctuation("hey Tim would love to connect are you available on Friday thanks Ben", "Hey, Tim would love to connect. Are you available on Friday? Thanks, Ben"),
+        )
+        // Different words: keep the recognizer's text.
+        assertEquals("send the logs", LiveText.mergePunctuation("send the logs", "Send the log."))
+        assertEquals("send the logs", LiveText.mergePunctuation(" send the logs ", ""))
+        assertEquals("One. Two three", LiveText.join(listOf("One."), " two three ").replace("two", "Two"))
+        assertEquals("One.", LiveText.join(listOf("One."), ""))
+        assertEquals("Please send me the latest build logs.", LiveText.endSentence("Please send me the latest build logs, "))
+        assertEquals("Are you free?", LiveText.endSentence("Are you free?"))
+        assertEquals("Meet at 4 pm.", LiveText.endSentence("Meet at 4 pm"))
+        assertEquals("", LiveText.endSentence(""))
     }
 
     @Test

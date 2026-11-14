@@ -17,7 +17,9 @@ servers; ThumbFree never does.
 - **Works with any keyboard**: use the ThumbFree voice keyboard, or keep Gboard and tap the floating **bubble**.
 - **Never lose a dictation**: you're told straight away if a call or another app takes the microphone, and a
   dictation that can't be typed is kept in a notification for you to copy.
-- **English and Hinglish**: English on NVIDIA Parakeet TDT (110M by default, 0.6B for the best accuracy); Hindi +
+- **Live typing**: words appear in the text box as you speak, like Gboard on a Pixel, on any phone and offline. Pick
+  the **Live** English model (79 MB); the finished text replaces them when you tap the mic again.
+- **English and Hinglish**: English on a Kroko streaming model (Live) or NVIDIA Parakeet TDT (110M Standard, 0.6B for the best accuracy); Hindi +
   English typed in Roman letters on Whisper (the accurate Hinglish model is 874 MB, for phones with 8 GB+ memory).
 - **Your words**: a personal dictionary (`journals = genres`) and a "words I use often" list that fixes near misses
   ("Kubirnets" → "Kubernetes"), pre-filled from your line of work if you like.
@@ -36,8 +38,8 @@ The full plan is in [docs/PLAN.md](docs/PLAN.md).
 
 1. Download `ThumbFree-x.y.z.apk` from [Releases](https://github.com/shivam098/thumbfree/releases) and open it. Android
    asks you to allow installs from your browser or file manager the first time.
-2. Open **ThumbFree**. A short guide walks you through the microphone, the speech model (downloads once, 137 MB for
-   English, then works offline), the keyboard, and a practice email and list.
+2. Open **ThumbFree**. A short guide walks you through the microphone, the speech model (downloads once, 79 MB for
+   live English, then works offline), the keyboard, and a practice email and list.
 
 Requires Android 8.0 or newer on a 64-bit phone.
 
@@ -92,5 +94,8 @@ cd thumbfree/android && ./gradlew :app:assembleDebug
 English recognition: NVIDIA Parakeet TDT models ([110M](https://huggingface.co/nvidia/parakeet-tdt_ctc-110m),
 [0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2); CC BY 4.0) running on
 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) and ONNX Runtime (MIT).
+Live English: the Kroko streaming model by [Banafo](https://huggingface.co/Banafo/Kroko-ASR) (community model,
+CC BY-SA 4.0) and the [Edge-Punct-Casing](https://huggingface.co/frankyoujian/Edge-Punct-Casing)
+punctuation model (Apache-2.0), both unmodified and downloaded separately from the app.
 Hindi + English: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) running quantized conversions of
 Oriserve's Whisper Hindi-to-Hinglish models (Apache-2.0).

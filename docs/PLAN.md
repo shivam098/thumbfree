@@ -37,7 +37,7 @@ App IDs: `app.thumbfree.android`, `app.thumbfree.ios` (with `app.thumbfree.ios.k
 
 ## 3. Feature reference (built on Android, copy to every platform)
 
-Each feature below shipped on Android between v0.1 and v0.4. It came from testing on a Pixel 11 and comparing with
+Each feature below shipped on Android between v0.1 and v0.6. It came from testing on a Pixel 11 and comparing with
 Wispr Flow's onboarding. The rules are written so the iPhone, Mac and Windows apps behave identically. **Shared test
 data proves it:** every port must pass `tests/vectors/formatter.tsv` and `tests/vectors/layout.tsv` on the device
 itself, not just on a computer, because regex engines differ.
@@ -49,7 +49,7 @@ itself, not just on a computer, because regex engines differ.
 | State | What you do | What you see |
 |---|---|---|
 | **Ready** | Tap the mic (Android/iPhone keyboard, bubble), or press the hotkey once (Mac: Fn/Globe or Right Option; Windows: Ctrl+Win) | Mic icon; "Tap to talk" / "Ctrl+Win to dictate" |
-| **Listening** | Speak. Tap / press the hotkey again to finish. ✕ or Esc cancels. | The control turns red with a stop square, a ring or meter moves with your voice, an elapsed timer runs ("0:07 · tap when you're done"), and your words appear live (where the model allows a live preview) |
+| **Listening** | Speak. Tap / press the hotkey again to finish. ✕ or Esc cancels. | The control turns red with a stop square, a ring or meter moves with your voice, an elapsed timer runs ("0:07 · tap when you're done"), and your words appear in the text box as you speak (live typing, 3.10) |
 | **Transcribing** | Nothing: wait a moment | The control dims with a spinning arc, and the pill or status reads "Transcribing…" until the text is typed |
 | **Done** | — | The typed text is shown briefly, or "Didn't catch anything" / an error |
 
@@ -66,7 +66,7 @@ Rules:
 
 | Language | Default model | Accurate model (opt-in) | Engine |
 |---|---|---|---|
-| English | NVIDIA Parakeet TDT 110M int8: 137 MB, punctuates and capitalizes itself | Parakeet TDT 0.6B v2 int8: 661 MB, best on the Open ASR leaderboard | sherpa-onnx (ONNX Runtime) |
+| English | **Live** (new installs): Kroko streaming, 79 MB, types as you speak (3.10). **Standard**: NVIDIA Parakeet TDT 110M int8, 137 MB, punctuates and capitalizes itself | Parakeet TDT 0.6B v2 int8: 661 MB, best on the Open ASR leaderboard | sherpa-onnx (ONNX Runtime) |
 | Hindi + English (Roman letters) | Oriserve Whisper-Hindi2Hinglish-Swift q8: 82 MB | Oriserve …-Apex q8: 874 MB (large-v3-turbo) | whisper.cpp |
 
 - **Why two engines:** Parakeet is more accurate and much faster than Whisper for English (on the Android emulator,
@@ -77,7 +77,7 @@ Rules:
   connection. Multi-file models live in their own folder. Models no longer used are deleted on upgrade.
 - **Big models (over 300 MB) ask first:** size, the phone's memory against a recommendation (6 GB for 0.6B, 8 GB for
   Apex), and a mobile-data warning. Free space is checked before downloading.
-- **Live preview is off for the big models** (too slow to re-run every second on a phone).
+- **Live typing is off for the big models** (too slow to re-run twice a second on a phone): they type when you finish.
 - **Efficiency:** one speech thread, at most 4 decoding threads, model unloaded after 3 idle minutes, microphone only
   while dictating.
 - **Future (not started):** run Apex on the Qualcomm NPU (about 0.3 s encoder on a Snapdragon 8 Elite, per Qualcomm AI
@@ -211,13 +211,68 @@ Settings. Steps:
 ### 3.9 Keyboard UI (Android reference)
 
 - Big round mic: tap to talk, tap to finish (3.0). While listening: red stop square, voice ring, timer, ✕ cancel key. While transcribing: spinning arc.
-- Status line with the live preview. Keys: switch keyboard (long-press for the list), EN / HI+EN, insert the last
+- Live words go into the text box (3.10); the status line shows "Listening…" (or the words, with live typing off). Keys: switch keyboard (long-press for the list), EN / HI+EN, insert the last
   dictation again, space, delete (repeats), enter (follows the field's action: send, search, done…).
 - Settings button. Idle text: "Tap the mic and speak · offline".
 
+### 3.10 Live typing: words appear as you speak (every platform)
+
+Modelled on Gboard's voice typing on the Pixel 11 (Tensor G6): the words go **into the text box** as you speak,
+underlined until you finish, and then the finished text replaces them. ThumbFree does it fully offline on any phone,
+with no special chip, by letting people pick a **lighter streaming model**.
+
+**Models (people choose; Settings and the first-run guide):**
+
+| English tier | Model | Size | Live typing | Notes |
+|---|---|---|---|---|
+| **Live** (default for new installs) | Kroko streaming Zipformer (Banafo, CC BY-SA 4.0) + Edge-Punct-Casing punctuation (Apache-2.0) via sherpa-onnx | 79 MB | **Streaming**: text after every 100 ms of audio | Cased words; a finished phrase (0.8 s pause) gets punctuation. Measured on a Snapdragon X laptop (2 threads): ~0.05 × real time |
+| **Standard** | Parakeet TDT 110M | 137 MB | Re-reads the newest audio every 0.5 s | Slightly more accurate final text |
+| **Accurate** | Parakeet TDT 0.6B v2 | 661 MB | No (types when you finish) | Best accuracy, needs 6 GB+ |
+
+- **Hindi + English** has no open streaming model yet: Standard (Swift) re-reads the newest audio every 0.5 s for live
+  typing; Accurate (Apex) types when you finish. Revisit when a streaming Hinglish model appears.
+- Rejected after benchmarks: FastConformer 80 ms streaming (lowercase, worse words) and Nemotron 0.6B streaming (0.6–1.1
+  × real time on a laptop: too slow for phones).
+- The punctuation model re-cases words badly ("YOUTUBE"), so only its **punctuation** is merged into the recognizer's
+  own words (`LiveText.mergePunctuation`, in the core with tests). If the words differ, the phrase stays unpunctuated.
+
+**Behaviour (the same on every platform):**
+
+1. When listening starts, remember the text before the cursor; spacing and "continue the sentence" are decided once,
+   from there.
+2. Each update replaces the **live text** in the box: the words so far, cleaned up by the formatter (fillers, spoken
+   punctuation, dictionary, word list) but **not laid out**. An email or a list only makes sense once you've finished.
+3. On finish, the full pipeline (3.2, with layout) runs and its result **replaces** the live text. With a streaming
+   model this is instant: the session already heard everything.
+4. Cancel, or nothing heard: the live text is removed. If the final pass fails, the live text is kept and a warning
+   shown.
+5. **The cursor moved** (the person tapped elsewhere in the box): stop updating, leave what's there, and don't type the
+   dictation a second time; the whole text is available from "insert again" (↺).
+6. **The text box closed**: the live text is removed, and the dictation goes to the tap-to-copy notification (3.6).
+7. While live text is in the box, the keyboard's own keys (space, delete, enter, ↺) wait until the dictation finishes,
+   so they can't split or replace it.
+8. Never in password fields. A **Live typing** switch (on by default) turns it off: words then show only on the
+   keyboard / pill, and the non-streaming models stop re-reading audio (saves battery). It replaces the old "Live
+   preview" switch.
+
+**Per platform:**
+
+| Platform | How the live text is shown | Status |
+|---|---|---|
+| Android keyboard | `InputConnection.setComposingText` (underlined), then `commitText` replaces it; `onUpdateSelection` without a composing span = cursor moved | **Built (v0.6)** |
+| Android bubble | Phase 1: the live words show in the bubble's pill; typed when you finish. Phase 2: type finished phrases into the other app at each pause (accessibility `ACTION_SET_TEXT` is all-or-nothing, so no underline) | Phase 1 built |
+| iPhone keyboard | `textDocumentProxy.setMarkedText(_:selectedRange:)` (marked = underlined), then `unmarkText()` + `insertText`. The app streams partial text to the keyboard through the App Group + Darwin notification every ~200 ms. Kroko via sherpa-onnx iOS | Design |
+| Mac | Type each **finished phrase** at a pause (paste, same-field check, 4.3); the pill shows the phrase still being spoken. Marked text isn't available to other apps | Design |
+| Windows | Same as Mac: phrases typed at pauses, the partial in the pill. sherpa-onnx C# API with the same Kroko files | Design |
+
+**Tests:** core tests for the punctuation merge and joining; an on-device test feeds a 10 s dictation in 100 ms chunks
+and checks that text arrives while speaking, that it keeps up with real time, the word-list fix, punctuation, and abort.
+Real-phone checks: Messages, WhatsApp, Gmail, Chrome's address bar (a field that handles composing text differently),
+moving the cursor mid-dictation, switching apps mid-dictation.
+
 ## 4. Platform designs
 
-### 4.1 Android (built: v0.5.0)
+### 4.1 Android (built: v0.6.0)
 
 Native Kotlin. sherpa-onnx (Parakeet) and whisper.cpp (two CPU builds: ARMv8.0 and ARMv8.2) through JNI. Views are
 built in code, with no UI libraries. APK: 27.6 MB.
@@ -373,10 +428,12 @@ thumbfree/
 |---|---|---|
 | **Android 0.1–0.4** ✅ | Keyboard, Parakeet + Whisper, word list, emails/lists/corrections, bubble, notifications, guide, opt-in samples | Released v0.4.0; CI: core tests, APK build, emulator tests (formatter + layout vectors, both engines, every guide screen) |
 | **Android 0.5** ✅ | Tap to start / tap to finish with listening and transcribing states (3.0); standard + bubble editions; Android 16 target and a Play app bundle | Released v0.5.0 |
-| **Android 0.6** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then Google Play: internal test, then a closed test (12+ testers for 14 days, required for new personal accounts), then production | Bubble works in the top 10 apps; Play listing approved |
+| **Android 0.6** ✅ | Live typing (3.10): Kroko streaming English tier, composing text in the keyboard, faster live Hinglish | Released v0.6.0 |
+| **Android 0.7** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then Google Play: internal test, then a closed test (12+ testers for 14 days, required for new personal accounts), then production | Bubble works in the top 10 apps; Play listing approved |
 | **Apple spike** (week 1) | (a) The `android/core` KMP framework passing both vector files on the iOS Simulator and macOS; (b) iPhone: keyboard Start → app session → swipe back → mic in the keyboard → text inserted, on a real iPhone; (c) Parakeet 110M speed on iPhone and Mac | All three work, or the fallback (Swift port, different session design) is chosen |
 | **iPhone 0.x** (weeks 2–5) | Keyboard + app session, models, guide, notifications, Shortcuts action, opt-in samples | TestFlight with the acceptance list (Messages, WhatsApp, Mail, Notes, Safari) |
 | **Mac 0.x** (weeks 4–7) | Menu bar, hotkey, pill, paste with the same-field check, guide, optional floating mic | Notarized `.dmg`; acceptance on a real Mac (Notes, Mail, Safari, Chrome, Slack, VS Code, Terminal) |
+| **Windows live typing** | Kroko through the sherpa-onnx C# API; phrases typed at pauses, the partial in the pill (3.10); a Live / Standard model choice | Real-app labs (Notepad, Word, Teams, browser, VS Code) |
 | **Windows 1.0** | Section 3 features on top of Voice Dictation 0.3; archive `windows-dictation` | Real-app labs pass; winget |
 | **Later** | Auto language pick (English word overlap ≥ 0.5 in 16/17 English clips, 0/6 Hinglish); learn from corrections; NPU / Neural Engine for Apex; History (opt-in) | |
 
@@ -432,6 +489,8 @@ One product version across platforms; release assets per platform.
 | Kotlin/Native regex differs from Java/ICU | Vectors on the iOS Simulator in CI; Swift port as the fallback |
 | Play policy for the accessibility bubble | `isAccessibilityTool=false`, disclosure before settings, the declaration form; the keyboard works without it |
 | Bubble text insertion fails in some apps (web views, custom editors) | Paste fallback, then the tap-to-copy notification; list the top apps in acceptance tests |
+| Live text misbehaves in some editors (composing text in web views, custom editors) | The Live typing switch; the cursor-moved rule (3.10); test the top apps; fall back to typing when you finish per app if needed |
+| Kroko licence (CC BY-SA 4.0) | Attribution in About and the README; the model files are unmodified and downloaded separately from the app (the app's own licence is unaffected) |
 | Big models on phones (memory, heat) | Opt-in with memory warnings; no live preview; unload when idle; NPU / Neural Engine later |
 | Hinglish model licences | Confirm the Oriserve licences allow redistribution before store listings (Parakeet: CC BY 4.0 with attribution; whisper.cpp: MIT) |
 | Platforms drifting apart | Section 3 is the spec; the vectors are the contract; one release checklist |

@@ -39,4 +39,11 @@ object Compose {
 
     /** For a dictation that lost its text box: formatted on its own, for copying. */
     fun standalone(prefs: Prefs, raw: String) = DictationFormatter(prefs.dictationOptions()).format(raw)
+
+    /**
+     * The words so far, typed live (underlined) while you speak: cleaned up like the final text but not laid out, as an
+     * email or list only makes sense once you've finished.
+     */
+    fun live(prefs: Prefs, raw: String, before: CharSequence?, field: FieldInfo) =
+        Insertion.forField(DictationFormatter(prefs.dictationOptions()).format(raw, Insertion.continuesSentence(before), field.search), field)
 }

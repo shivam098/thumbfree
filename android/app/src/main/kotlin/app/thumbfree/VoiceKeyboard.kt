@@ -166,8 +166,10 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     private fun leaveField() {
         if (state == State.Recording || state == State.Transcribing) {
             val private = field.private
+            clearLive()
             dictation.detach { result -> saveOrphan(result, private) }
         }
+        liveComposing = false
         setState(State.Idle)
     }
 
@@ -202,10 +204,15 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
             Dictation.Problem.Busy -> return show("Still transcribing the last dictation…", Tone.Muted)
         }
         startedAt = SystemClock.elapsedRealtime()
+        // Live typing replaces the words between here and the cursor as you speak; spacing is decided once, from here.
+        liveBefore = currentInputConnection?.getTextBeforeCursor(200, 0)
+        liveComposing = false
+        liveSeen = false
+        liveLost = false
         setState(State.Recording)
         haptic()
         val spec = dictation.model
-        show(if (prefs.livePreview && spec != null && !spec.livePreview) "Listening… (no live preview with this model)" else "Listening…", Tone.Active)
+        show(if (prefs.liveTyping && spec != null && !spec.livePreview) "Listening… (this model types when you finish)" else "Listening…", Tone.Active)
     }
 
     private fun finish() {
@@ -217,6 +224,7 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     private fun cancel() {
         if (state != State.Recording) return
         dictation.cancel()
+        clearLive()
         setState(State.Idle)
         haptic()
         show("Cancelled", Tone.Muted)
@@ -227,7 +235,51 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     }
 
     override fun onPreview(text: String) {
-        if (state == State.Recording) show(text.ifEmpty { "Listening…" }, Tone.Active)
+        if (state != State.Recording) return
+        if (typeLive(text)) show("Listening…", Tone.Active) else show(text.ifEmpty { "Listening…" }, Tone.Active)
+    }
+
+    // ---- live typing: the words so far sit in the text box as composing (underlined) text until you finish ----
+
+    private var liveBefore: CharSequence? = null
+    private var liveComposing = false
+    /** The editor has reported our composing text at least once (older reports may still arrive without it). */
+    private var liveSeen = false
+    /** The cursor moved away from the live text: stop touching it. */
+    private var liveLost = false
+
+    /** Puts [text] in the box as composing text; false when it can't (then the keyboard shows it). */
+    private fun typeLive(text: String): Boolean {
+        if (!prefs.liveTyping || field.password || liveLost) return false
+        val ic = currentInputConnection ?: return false
+        val live = if (text.isEmpty()) "" else Insertion.withSpacing(liveBefore, Compose.live(prefs, text, liveBefore, field))
+        if (live.isEmpty() && !liveComposing) return true
+        ic.setComposingText(live, 1)
+        liveComposing = live.isNotEmpty()
+        return true
+    }
+
+    /** Removes the live text (cancelled, or nothing was heard). */
+    private fun clearLive() {
+        if (liveComposing && !liveLost) currentInputConnection?.let {
+            it.setComposingText("", 1)
+            it.finishComposingText()
+        }
+        liveComposing = false
+    }
+
+    override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        if (!liveComposing || liveLost) return
+        if (candidatesStart >= 0) {
+            liveSeen = true
+        } else if (liveSeen) {
+            // The person tapped elsewhere in the box, so the editor ended our composing text. Leave it be, and don't
+            // type the dictation a second time somewhere else.
+            liveLost = true
+            liveComposing = false
+            currentInputConnection?.finishComposingText()
+        }
     }
 
     override fun onWarning(message: String) = show(message, Tone.Warn)
@@ -241,17 +293,43 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     override fun onTranscript(result: Dictation.Transcript?) {
         setState(State.Idle)
         when {
-            result == null -> show("Couldn't turn that into text. Please try again.", Tone.Warn)
-            result.raw.isEmpty() -> show("Didn't catch anything. Tap the mic and speak.", Tone.Muted)
+            result == null -> {
+                if (liveComposing) {
+                    // Keep what was typed live rather than lose it.
+                    currentInputConnection?.finishComposingText()
+                    liveComposing = false
+                    show("Couldn't finish the transcript; the live text was kept.", Tone.Warn)
+                } else {
+                    show("Couldn't turn that into text. Please try again.", Tone.Warn)
+                }
+            }
+            result.raw.isEmpty() -> {
+                clearLive()
+                show("Didn't catch anything. Tap the mic and speak.", Tone.Muted)
+            }
             else -> insert(result)
         }
     }
     private fun insert(result: Dictation.Transcript) {
         val ic = currentInputConnection ?: return show("Tap a text box first.", Tone.Warn)
         if (field.password) return show("Dictation is off in password fields", Tone.Warn)
-        val before = ic.getTextBeforeCursor(200, 0)
+        val live = liveComposing
+        liveComposing = false
+        if (liveLost) {
+            val text = Compose.text(prefs, result.raw, liveBefore, field, email)
+            if (!field.private) lastText = text
+            return show("You moved the cursor, so the rest wasn't typed. Tap ↺ to insert the whole dictation.", Tone.Warn)
+        }
+        // With live text in the box, the text before it is what it was when you started; commitText replaces the live text.
+        val before = if (live) liveBefore else ic.getTextBeforeCursor(200, 0)
         val text = Compose.text(prefs, result.raw, before, field, email)
-        if (text.isEmpty()) return show("Didn't catch anything.", Tone.Muted)
+        if (text.isEmpty()) {
+            if (live) {
+                ic.setComposingText("", 1)
+                ic.finishComposingText()
+            }
+            return show("Didn't catch anything.", Tone.Muted)
+        }
         ic.commitText(Insertion.withSpacing(before, text), 1)
         if (!field.private) {
             lastText = text
@@ -263,7 +341,15 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
 
     // ---- keys ----
 
+    /** Keys would replace or split the live text: they wait until the dictation is typed. */
+    private fun liveBusy(): Boolean {
+        if (!liveComposing || state == State.Idle) return false
+        show("Tap the mic to finish dictating first", Tone.Muted)
+        return true
+    }
+
     private fun commit(text: String) {
+        if (liveBusy()) return
         currentInputConnection?.commitText(text, 1)
     }
 
@@ -275,11 +361,13 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     }
 
     private fun deleteOne() {
+        if (liveBusy()) return main.removeCallbacks(repeatDelete)
         val ic = currentInputConnection ?: return
         if (!ic.getSelectedText(0).isNullOrEmpty()) ic.commitText("", 1) else sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
     }
 
     private fun enter() {
+        if (liveBusy()) return
         val ic = currentInputConnection ?: return
         if (!noEnterAction && editorAction != EditorInfo.IME_ACTION_NONE && editorAction != EditorInfo.IME_ACTION_UNSPECIFIED) {
             ic.performEditorAction(editorAction)
@@ -291,6 +379,7 @@ class VoiceKeyboard : InputMethodService(), Dictation.Listener {
     }
 
     private fun insertAgain() {
+        if (liveBusy()) return
         val text = lastText ?: return show("Nothing dictated yet", Tone.Muted)
         val ic = currentInputConnection ?: return
         ic.commitText(Insertion.withSpacing(ic.getTextBeforeCursor(200, 0), Insertion.forField(text, field)), 1)

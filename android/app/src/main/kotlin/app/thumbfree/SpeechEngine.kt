@@ -34,6 +34,7 @@ class SpeechEngine(private val folder: (ModelSpec) -> File) {
         val loaded = when (spec.engine) {
             Engine.Whisper -> WhisperRecognizer.load(File(folder(spec), spec.files.single().path.substringAfterLast('/')), threads)
             Engine.Parakeet -> ParakeetRecognizer.load(folder(spec), threads)
+            Engine.Streaming -> StreamingRecognizer.load(folder(spec), threads)
         }
         model = loaded
         modelId = spec.id
