@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Recording happens only while the mic key is held (or hands-free is on). Nothing records in the background. -->
+    <!-- Recording happens only while you dictate (mic held, or until you tap again). Nothing records in the background. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Only used to download the speech models; speech and text never leave the phone. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- To warn before a big download on mobile data. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The bubble records from a short-lived foreground service (Android's rule for apps not on screen). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- "Don't speak into the void": the microphone went silent, or a dictation couldn't be typed. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".ThumbFreeApp"
@@ -30,6 +35,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".OnboardingActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name=".VoiceKeyboard"
             android:exported="true"
@@ -42,5 +52,33 @@
                 android:name="android.view.im"
                 android:resource="@xml/method" />
         </service>
+
+        <service
+            android:name=".BubbleService"
+            android:exported="true"
+            android:label="@string/bubble_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/bubble" />
+        </service>
+
+        <service
+            android:name=".MicService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <receiver
+            android:name=".CopyReceiver"
+            android:exported="false" />
+
+        <provider
+            android:name=".SampleProvider"
+            android:authorities="${applicationId}.samples"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

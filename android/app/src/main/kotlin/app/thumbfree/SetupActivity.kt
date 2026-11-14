@@ -29,6 +29,7 @@ import android.widget.TextView
 import app.thumbfree.core.Language
 import app.thumbfree.core.ModelCatalog
 import app.thumbfree.core.ModelSpec
+import app.thumbfree.core.Professions
 import app.thumbfree.whisper.WhisperModel
 
 /** Getting started (three steps), speech models, options and the personal dictionary. */
@@ -39,6 +40,11 @@ class SetupActivity : Activity() {
     private lateinit var micStep: Step
     private lateinit var enableStep: Step
     private lateinit var pickStep: Step
+    private lateinit var bubbleStep: Step
+    private lateinit var notifyStep: Step
+    private lateinit var vocabularyBox: EditText
+    private lateinit var professionButton: Button
+    private lateinit var samplesNote: TextView
     private val modelRows = mutableListOf<ModelRow>()
     private lateinit var languageNote: TextView
     private lateinit var englishButton: Button
@@ -49,6 +55,11 @@ class SetupActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!prefs.onboarded) {
+            startActivity(Intent(this, OnboardingActivity::class.java))
+            finish()
+            return
+        }
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dpi(20), dpi(20), dpi(20), dpi(28))
@@ -71,16 +82,25 @@ class SetupActivity : Activity() {
         setContentView(scroll)
 
         column.addView(text("ThumbFree", 30f, bold = true))
-        column.addView(text("Type anywhere with your voice. Speech is turned into text on this phone; nothing is uploaded.", 15f, muted = true).spaced(4, 16))
+        column.addView(text("Type anywhere with your voice, 100% offline. Speech is turned into text on this phone; your voice never leaves it.", 15f, muted = true).spaced(4, 16))
 
         column.addView(heading("Get started"))
-        micStep = step(column, "1", "Allow the microphone", "Used only while you hold the mic key.", "Allow") { askMicrophone() }
+        micStep = step(column, "1", "Allow the microphone", "Used only while you dictate.", "Allow") { askMicrophone() }
         enableStep = step(column, "2", "Turn on the ThumbFree keyboard", "Switch on “ThumbFree voice” in the list.", "Open settings") {
             startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
         }
         pickStep = step(column, "3", "Switch to it", "Or tap the keyboard icon at the bottom of any keyboard.", "Choose keyboard") {
             getSystemService(InputMethodManager::class.java).showInputMethodPicker()
         }
+        bubbleStep = step(column, "+", "The bubble (optional)", "A floating mic beside any keyboard: keep Gboard and still dictate.", "Set up") {
+            startActivity(Intent(this, OnboardingActivity::class.java).putExtra(OnboardingActivity.EXTRA_STEP, "Bubble"))
+        }
+        notifyStep = step(column, "+", "Notifications (recommended)", "Get told if the microphone goes silent, and never lose a dictation.", "Allow") {
+            askNotifications()
+        }
+        column.addView(button("Show the guide again") {
+            startActivity(Intent(this, OnboardingActivity::class.java))
+        }.spaced(4, 0))
 
         column.addView(heading("Language"))
         val languages = LinearLayout(this)
@@ -105,11 +125,13 @@ class SetupActivity : Activity() {
         for (spec in ModelCatalog.all) modelRows += ModelRow(spec).also { column.addView(it.view) }
 
         column.addView(heading("Writing"))
+        column.addView(switch("Smart formatting", "Emails laid out, spoken lists turned into bullets, “3 pm… actually 4 pm” → “4 pm”", prefs.smartFormatting) { prefs.smartFormatting = it })
         column.addView(switch("Remove filler words", "um, uh, “you know”, “thik hai na”…", prefs.removeFillers) { prefs.removeFillers = it })
         column.addView(switch("Spoken punctuation", "Say “comma”, “full stop”, “new line”", prefs.spokenPunctuation) { prefs.spokenPunctuation = it })
         column.addView(switch("Live preview", "Show words as you speak (uses more battery)", prefs.livePreview) { prefs.livePreview = it })
         column.addView(switch("Return to my keyboard", "Switch back after each dictation", prefs.switchBack) { prefs.switchBack = it })
         column.addView(switch("Vibrate", "A small tap when recording starts and stops", prefs.haptics) { prefs.haptics = it })
+        column.addView(switch("Show the bubble", "When the bubble is turned on in Android's accessibility settings", prefs.bubble) { prefs.bubble = it })
 
         column.addView(heading("Words I use often"))
         column.addView(
@@ -120,7 +142,7 @@ class SetupActivity : Activity() {
                 13f, muted = true,
             ).spaced(0, 6),
         )
-        column.addView(EditText(this).apply {
+        vocabularyBox = EditText(this).apply {
             setText(prefs.vocabulary)
             hint = "GitHub Copilot\nvibe coding\ngenres"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -133,7 +155,10 @@ class SetupActivity : Activity() {
                     prefs.vocabulary = s?.toString().orEmpty()
                 }
             })
-        })
+        }
+        column.addView(vocabularyBox)
+        professionButton = button(professionLabel()) { chooseProfession() }
+        column.addView(professionButton.spaced(4, 0))
 
         column.addView(heading("Personal dictionary"))
         column.addView(text("One per line: what it hears = what to type. For example: journals = genres", 13f, muted = true).spaced(0, 6))
@@ -153,6 +178,34 @@ class SetupActivity : Activity() {
         }
         column.addView(dictionary)
 
+        column.addView(heading("Help improve ThumbFree"))
+        column.addView(
+            text(
+                "Off unless you turn it on. Your dictations (audio, what was recognised and what was typed) are kept on this " +
+                    "phone only. Nothing is sent automatically: when you choose, “Share” packs them into a file and you pick where it goes.",
+                13f, muted = true,
+            ).spaced(0, 6),
+        )
+        column.addView(switch("Keep my dictations to share", "Never from password or incognito fields", prefs.shareSamples) {
+            prefs.shareSamples = it
+            refresh()
+        })
+        samplesNote = text("", 13f, muted = true).spaced(4, 4)
+        column.addView(samplesNote)
+        val sampleButtons = LinearLayout(this)
+        sampleButtons.addView(button("Share…") { shareSamples() }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpi(8) })
+        sampleButtons.addView(button("Delete all") {
+            AlertDialog.Builder(this)
+                .setMessage("Delete all kept dictations from this phone?")
+                .setPositiveButton("Delete") { _, _ ->
+                    app.samples.deleteAll()
+                    refresh()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        column.addView(sampleButtons)
+
         column.addView(heading("Try it"))
         column.addView(EditText(this).apply {
             hint = "Tap here, switch to ThumbFree, hold the mic and talk"
@@ -168,7 +221,8 @@ class SetupActivity : Activity() {
             text(
                 "Version $version · speech engines: NVIDIA Parakeet via sherpa-onnx (English), " +
                     "Whisper via whisper.cpp ($engine, Hindi + English)\n" +
-                    "Audio is kept in memory only while you dictate and is never saved or sent anywhere. " +
+                    "Speech is recognised on this phone, with no internet. Audio is kept only in memory while you dictate " +
+                    "(unless you turn on “Keep my dictations to share”) and is never sent anywhere by ThumbFree. " +
                     "The internet is used only to download the speech models.",
                 13f, muted = true,
             ),
@@ -261,6 +315,62 @@ class SetupActivity : Activity() {
             else -> "Needs “${spec.label}” (${mb(spec.bytes)}). Download it below."
         }
         modelRows.forEach { it.refresh(it.spec == spec) }
+
+        bubbleStep.set(done = bubbleEnabled(), available = true)
+        notifyStep.set(done = app.notifier.allowed, available = true)
+        val summary = app.samples.summary()
+        samplesNote.text = when {
+            summary.count > 0 -> "${summary.count} dictations kept on this phone (${mb(summary.bytes)})."
+            prefs.shareSamples -> "None kept yet: your next dictations will appear here."
+            else -> "Nothing kept."
+        }
+        if (vocabularyBox.text.toString() != prefs.vocabulary) vocabularyBox.setText(prefs.vocabulary)
+        professionButton.text = professionLabel()
+    }
+
+    private fun bubbleEnabled(): Boolean =
+        getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+            .getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .any { it.resolveInfo.serviceInfo.packageName == packageName }
+
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            (shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) || !getSharedPreferences("state", MODE_PRIVATE).getBoolean("asked_notify", false))
+        ) {
+            getSharedPreferences("state", MODE_PRIVATE).edit().putBoolean("asked_notify", true).apply()
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
+        } else {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+        }
+    }
+
+    private fun professionLabel() = prefs.profession?.let { "Add words for my work: $it (change)" } ?: "Add words for my work…"
+
+    /** Adds a field's names and jargon to the word list (nothing is removed). */
+    private fun chooseProfession() {
+        val roles = Professions.all.keys.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("What do you do?")
+            .setItems(roles) { _, i ->
+                prefs.profession = roles[i]
+                prefs.vocabulary = Professions.addTo(prefs.vocabulary, roles[i])
+                refresh()
+            }
+            .show()
+    }
+
+    /** Packs the kept dictations into a zip and opens the share sheet. */
+    private fun shareSamples() {
+        if (app.samples.summary().count == 0) {
+            AlertDialog.Builder(this).setMessage("No dictations kept yet.").setPositiveButton("OK", null).show()
+            return
+        }
+        Thread {
+            val intent = runCatching { app.samples.shareIntent() }.getOrNull()
+            runOnUiThread {
+                if (intent != null) startActivity(Intent.createChooser(intent, "Share dictations"))
+            }
+        }.start()
     }
 
     // ---- pieces ----
@@ -281,7 +391,7 @@ class SetupActivity : Activity() {
             tag = number
             text = number
             gravity = Gravity.CENTER
-            setTextColor(0xFFFFFFFF.toInt())
+            setTextColor(color(R.color.tf_on_accent))
             typeface = Typeface.DEFAULT_BOLD
         }
         row.addView(badge, LinearLayout.LayoutParams(dpi(28), dpi(28)).apply { marginEnd = dpi(12) })
@@ -375,7 +485,7 @@ class SetupActivity : Activity() {
 
     private fun styleChoice(button: Button, chosen: Boolean) {
         button.background = rounded(color(if (chosen) R.color.tf_accent else R.color.tf_surface), 12f)
-        button.setTextColor(if (chosen) 0xFFFFFFFF.toInt() else color(R.color.tf_text))
+        button.setTextColor(if (chosen) color(R.color.tf_on_accent) else color(R.color.tf_text))
     }
 
     private fun switch(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) = card().apply {

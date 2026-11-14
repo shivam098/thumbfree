@@ -10,4 +10,6 @@
     <color name="tf_muted">#A0A0AA</color>
     <color name="tf_ok">#81C995</color>
     <color name="tf_warn">#F28B82</color>
+    <color name="tf_track">#3A3A42</color>
+    <color name="tf_on_accent">#1B1B1F</color>
 </resources>

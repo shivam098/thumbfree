@@ -2,6 +2,8 @@ package app.thumbfree
 
 import android.app.Application
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import app.thumbfree.core.DictationOptions
 import app.thumbfree.core.Language
 import app.thumbfree.core.ModelCatalog
@@ -13,6 +15,24 @@ class ThumbFreeApp : Application() {
     val prefs by lazy { Prefs(this) }
     val models by lazy { ModelStore(this) }
     val engine by lazy { SpeechEngine { spec -> models.folder(spec) } }
+    val notifier by lazy { Notifier(this) }
+    val samples by lazy { SampleStore(this) }
+
+    private val main = Handler(Looper.getMainLooper())
+    private val unload = Runnable { if (!Dictation.anyBusy) engine.unload() }
+
+    /** A dictation is starting: keep the model loaded. */
+    fun holdModel() = main.removeCallbacks(unload)
+
+    /** Frees the model's memory after a few idle minutes. */
+    fun releaseModelLater() {
+        main.removeCallbacks(unload)
+        main.postDelayed(unload, IDLE_UNLOAD_MS)
+    }
+
+    companion object {
+        private const val IDLE_UNLOAD_MS = 3 * 60_000L
+    }
 }
 
 val Context.thumbFree: ThumbFreeApp get() = applicationContext as ThumbFreeApp
@@ -32,6 +52,28 @@ class Prefs(context: Context) {
     var livePreview by flag("live_preview", true)
     var switchBack by flag("switch_back", false)
     var haptics by flag("haptics", true)
+
+    /** Emails, lists and "…actually…" corrections. */
+    var smartFormatting by flag("smart_formatting", true)
+
+    /** The first-run guide was finished or skipped. */
+    var onboarded by flag("onboarded", false)
+
+    /** Show the floating mic when the bubble service is on (a quick way to pause it). */
+    var bubble by flag("bubble", true)
+
+    /** Keep recordings on this phone so you can choose to share them ("Help improve ThumbFree"). */
+    var shareSamples by flag("share_samples", false)
+
+    var profession: String?
+        get() = sp.getString("profession", null)
+        set(value) = sp.edit().putString("profession", value).apply()
+
+    /** The bubble's place: vertical position (px from the top) and screen side. */
+    var bubbleY: Int
+        get() = sp.getInt("bubble_y", -1)
+        set(value) = sp.edit().putInt("bubble_y", value).apply()
+    var bubbleLeft by flag("bubble_left", false)
 
     var dictionary: String
         get() = sp.getString("dictionary", "") ?: ""

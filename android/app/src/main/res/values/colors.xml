@@ -11,4 +11,6 @@
     <color name="tf_ok">#1E8E3E</color>
     <color name="tf_warn">#B3261E</color>
     <color name="tf_launcher_bg">#5B4BDB</color>
+    <color name="tf_track">#E0E0E6</color>
+    <color name="tf_on_accent">#FFFFFF</color>
 </resources>
