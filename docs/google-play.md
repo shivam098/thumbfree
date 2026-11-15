@@ -6,7 +6,10 @@ Everything needed to publish the Android app, in order. Text in boxes is ready t
 [GitHub release](https://github.com/shivam098/thumbfree/releases). Play Protect's sideloading block doesn't apply to
 apps installed from Play, so Play users get the bubble.
 
-## 0. Already done in the app (v0.5.0)
+## 0. Already done in the app (v0.7.0)
+
+Upload `ThumbFree-0.7.0-google-play.aab` (or the newest release's). Live typing and History add no new permissions,
+and History stays on the phone, so the Data safety answer below is unchanged.
 
 - Targets **Android 16 (API 36)**, required for new apps since 31 Aug 2026.
 - Builds an **Android App Bundle** (`.aab`), signed with the ThumbFree upload key, in the release workflow.
