@@ -36,11 +36,12 @@ public static partial class Layout
     }
 
     /// <summary>
-    /// Whether a dictation that begins with <paramref name="start"/> (formatted) may be laid out once it's finished: an
-    /// email greeting at the start of the text, a bullet command, a "first, …" list, or a list heading ("Things to do
-    /// today", "My shopping list"). Live typing holds such a dictation back, because text typed into another app can't be
-    /// laid out afterwards. Built from the same patterns as <see cref="Apply"/>, so it only predicts what can happen; a
-    /// spoken line break means no layout at all.
+    /// Whether a dictation that begins with <paramref name="start"/> (formatted) may be laid out once it's finished: a
+    /// bullet command, a "first, …" list, a list heading ("Things to do today", "My shopping list"), or, in an email field,
+    /// a greeting at the start of the text. Elsewhere an email also needs a signed name, which only comes at the end, so a
+    /// greeting alone doesn't count (chat messages keep live typing). Live typing holds such a dictation back, because
+    /// text typed into another app can't be laid out afterwards. Built from the same patterns as <see cref="Apply"/>, so
+    /// it only predicts what can happen; a spoken line break means no layout at all.
     /// </summary>
     public static bool MayLayOut(string start, LayoutContext context)
     {
@@ -50,7 +51,7 @@ public static partial class Layout
         }
 
         var ordinal = OrdinalRegex().Match(start);
-        return (context.AtStart && GreetingStartRegex().IsMatch(start))
+        return (context.AtStart && context.Email && GreetingStartRegex().IsMatch(start))
             || BulletRegex().IsMatch(start)
             || (ordinal.Success && OrdinalWord(ordinal) == "first")
             || IsListHeading(SplitHead(start)?.Head ?? start);

@@ -12,7 +12,10 @@ namespace ThumbFree.Core;
 /// Accepts line breaks. Elsewhere a spoken "new line" becomes a space, since Enter would send or search.
 /// </param>
 /// <param name="Private">An incognito / InPrivate window: no voice samples are kept from it.</param>
-/// <param name="Email">An email app or a webmail compose box: a greeting or a sign-off alone is enough for email layout.</param>
+/// <param name="Email">
+/// An email app or a webmail compose box: a greeting or a sign-off alone is enough for email layout, so live typing holds
+/// a dictation that starts with a greeting.
+/// </param>
 public sealed record FieldInfo(bool Password = false, bool Search = false, bool MultiLine = false, bool Private = false, bool Email = false);
 
 /// <summary>How dictated text joins what is already in the field. Same rules as the Android app.</summary>

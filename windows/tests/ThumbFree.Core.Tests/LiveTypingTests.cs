@@ -90,6 +90,27 @@ public class LiveTypingTests
     }
 
     [Fact]
+    public void A_greeting_in_a_non_email_field_is_typed_live()
+    {
+        // Outside email apps an email also needs a signed name, which only comes at the end: chat messages keep live typing.
+        var d = new Dictation("", MultiLine);
+        Assert.Equal("", d.Pause("Hey Tim, are you free tonight?"));
+        Assert.False(d.Typing.HoldsAll);
+        Assert.Equal("Hey Tim, are you free tonight?", d.Pause("Want to grab dinner?"));
+        Assert.Equal(" Want to grab dinner?", d.Finish());
+    }
+
+    [Fact]
+    public void A_greeting_in_an_email_field_holds_the_dictation()
+    {
+        var d = new Dictation("", EmailBody);
+        Assert.Equal("", d.Pause("Hey Tim, are you free tonight?"));
+        Assert.True(d.Typing.HoldsAll);
+        Assert.Equal("", d.Pause("Want to grab dinner?"));
+        Assert.Equal("Hey Tim,\n\nAre you free tonight? Want to grab dinner?", d.Finish());
+    }
+
+    [Fact]
     public void A_sign_off_waits_for_the_end_and_goes_on_its_own_lines()
     {
         var d = new Dictation("", EmailBody);
@@ -253,14 +274,16 @@ public class LiveTypingTests
     [InlineData("I need to finish the list, then email Bob.", false)]
     [InlineData("Dear team\nThe build is green.", false)]
     public void Live_typing_holds_what_may_become_an_email_or_a_list(string start, bool expected) =>
-        Assert.Equal(expected, Layout.MayLayOut(start, new LayoutContext(MultiLine: true, AtStart: true)));
+        Assert.Equal(expected, Layout.MayLayOut(start, new LayoutContext(MultiLine: true, AtStart: true, Email: true)));
 
     [Fact]
-    public void Only_multi_line_fields_are_held_and_greetings_only_at_the_start()
+    public void Greetings_hold_only_at_the_start_of_an_email_and_nothing_holds_in_a_single_line_field()
     {
-        Assert.False(Layout.MayLayOut("Things to do today", new LayoutContext(MultiLine: false, AtStart: true)));
-        Assert.False(Layout.MayLayOut("Hey Tim,", new LayoutContext(MultiLine: true, AtStart: false)));
-        Assert.True(Layout.MayLayOut("Things to do today", new LayoutContext(MultiLine: true, AtStart: false)));
+        Assert.True(Layout.MayLayOut("Hey Tim,", new LayoutContext(MultiLine: true, AtStart: true, Email: true)));
+        Assert.False(Layout.MayLayOut("Hey Tim,", new LayoutContext(MultiLine: true, AtStart: true, Email: false)));
+        Assert.False(Layout.MayLayOut("Hey Tim,", new LayoutContext(MultiLine: true, AtStart: false, Email: true)));
+        Assert.True(Layout.MayLayOut("Things to do today", new LayoutContext(MultiLine: true, AtStart: false, Email: false)));
+        Assert.False(Layout.MayLayOut("Things to do today", new LayoutContext(MultiLine: false, AtStart: true, Email: true)));
     }
 
     /// <summary>A dictation as the app drives it: each phrase is spoken word by word (the partial), then a pause finishes it.</summary>

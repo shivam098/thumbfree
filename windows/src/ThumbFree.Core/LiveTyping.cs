@@ -21,8 +21,8 @@ public readonly record struct LiveStep(string Type, string Pending);
 /// app can't be taken back (Backspace could destroy the person's own text), so only final text is typed. A phrase is
 /// typed one pause late, and only if the text with the next phrase, laid out as it would be at the end, still begins
 /// with it: "… actually 4 pm", "scratch that", a repeated phrase or a sign-off can still change it. A dictation that may
-/// become an email or a list, judged by how it starts, is held and typed whole at the end. One with nothing typed live
-/// ends exactly like a dictation typed at the end. Pure logic: the app does the typing.
+/// become a list, or an email in an email field, judged by how it starts, is held and typed whole at the end. One with
+/// nothing typed live ends exactly like a dictation typed at the end. Pure logic: the app does the typing.
 /// </summary>
 public sealed class LiveTyping
 {
