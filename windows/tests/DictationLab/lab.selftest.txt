@@ -63,9 +63,10 @@ ptt: secret words
 expectstatus: password field
 expectnot: secret words
 clipboard
-# An editor whose whole page is editable (designMode in a frame, as in TinyMCE or CKEditor 4): that page is the box.
+# An editor whose whole page is editable (designMode in a frame, as in TinyMCE): Chrome reports its editable body, a
+# group with no name, as focused, and that's the box.
 keys: Tab
-expectfocus: Notes
 field
+expectfield: Group
 ptt: Notes from the meeting full stop
 expect: Notes from the meeting.
