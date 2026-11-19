@@ -342,6 +342,25 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Theory]
+    [InlineData("englishTier", "Live, Accurate")]
+    [InlineData("hinglishTier", "Live,Accurate")]
+    [InlineData("language", "English,Hinglish")]
+    [InlineData("language", "Hinglish, English")]
+    public void Names_joined_by_a_comma_are_a_mistake_not_a_choice(string key, string value)
+    {
+        var path = _folder.File("settings.json");
+        File.WriteAllText(path, $$"""{ "{{key}}": "{{value}}", "keepHistory": false }""");
+
+        var store = new SettingsStore(AppSettings.Load(path), path);
+
+        Assert.Equal(Tier.Live, store.Current.EnglishTier);
+        Assert.Equal(Tier.Standard, store.Current.HinglishTier);
+        Assert.Equal(Language.English, store.Current.Language);
+        Assert.False(store.Current.KeepHistory);
+        Assert.Contains($"In settings.json, “{key}” should be ", store.LastError, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("\"replacements\": { \"caf@\": \"Caf@\", \"journals\": \"genres\" }", "replacements", "an entry in “replacements”")]
     [InlineData("\"snippets\": { \"sig\": \"Thanks, Ren@\" }", "snippets", "an entry in “snippets”")]
     [InlineData("\"vocabulary\": \"Caf@\\nGitHub\"", "vocabulary", "“vocabulary”")]

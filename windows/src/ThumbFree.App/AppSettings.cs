@@ -496,16 +496,19 @@ internal sealed class AppSettings
         }
     }
 
-    /// <summary>Reads an enum's name in any case; anything else is a mistake reported for that one setting.</summary>
+    /// <summary>
+    /// Reads one member's own name, in any case. Anything else is a mistake reported for that one setting: a number,
+    /// or names joined by a comma, which Enum.TryParse would combine as flags ("Live, Accurate" would be Accurate).
+    /// </summary>
     private sealed class NamedEnumConverter<T> : JsonConverter<T>
         where T : struct, Enum
     {
         public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            if (reader.TokenType == JsonTokenType.String && reader.GetString() is { } name && !name.Any(char.IsDigit) &&
-                Enum.TryParse<T>(name, ignoreCase: true, out var value) && Enum.IsDefined(value))
+            if (reader.TokenType == JsonTokenType.String && reader.GetString()?.Trim() is { } name &&
+                Enum.GetNames<T>().FirstOrDefault(n => n.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } member)
             {
-                return value;
+                return Enum.Parse<T>(member);
             }
 
             throw new JsonException($"Not one of {string.Join(", ", Enum.GetNames<T>())}.");
