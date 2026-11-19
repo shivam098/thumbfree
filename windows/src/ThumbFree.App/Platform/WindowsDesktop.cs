@@ -5,7 +5,7 @@ using ThumbFree.Core;
 namespace ThumbFree.App.Platform;
 
 /// <summary>Inserts text where the cursor is, using Win32 input and UI Automation for the field checks.</summary>
-internal sealed class WindowsDesktop : IDesktop
+internal sealed class WindowsDesktop : IDesktop, IGatedInput
 {
     private readonly int _ownProcessId = Environment.ProcessId;
 
@@ -42,10 +42,11 @@ internal sealed class WindowsDesktop : IDesktop
             return FieldCheck.Elevated;
         }
 
+        // The focus as it is: Chromium pages are woken only when a dictation starts (FocusInspector.Read).
         try
         {
-            var check = Task.Run(() => Check(Focused()));
-            return check.Wait(800) ? check.Result : FieldCheck.Unknown;
+            var check = Task.Run(() => Check(FocusInspector.Focused()));
+            return check.Wait(2000) ? check.Result : FieldCheck.Unknown;
         }
         catch (AggregateException)
         {
@@ -57,8 +58,8 @@ internal sealed class WindowsDesktop : IDesktop
     {
         try
         {
-            var check = Task.Run(() => HasTrailingText(Focused()));
-            return check.Wait(600) ? check.Result : null;
+            var check = Task.Run(() => HasTrailingText(FocusInspector.Focused()));
+            return check.Wait(2000) ? check.Result : null;
         }
         catch (AggregateException)
         {
@@ -66,24 +67,43 @@ internal sealed class WindowsDesktop : IDesktop
         }
     }
 
-    public void TypeText(string text)
+    public void TypeText(string text) => TypeText(text, beforeKeys: () => { });
+
+    /// <summary>
+    /// Pastes (or types) <paramref name="text"/>. <paramref name="beforeKeys"/> runs last, right before Ctrl+V or the
+    /// keystrokes: after the clipboard holds the text, which can take seconds when it held Office content, and after held
+    /// modifier keys are let go. If it throws, nothing is typed and the clipboard is put back.
+    /// </summary>
+    public void TypeText(string text, Action beforeKeys)
     {
         text = text.Replace("\r\n", " ").Replace('\n', ' ');
-        KeyboardInput.WaitForModifiersReleased();
         if (string.Equals(InsertMethod, "Paste", StringComparison.OrdinalIgnoreCase))
         {
-            ClipboardPaste.Paste(text);
+            ClipboardPaste.Paste(text, () => BeforeKeys(beforeKeys));
         }
         else
         {
+            BeforeKeys(beforeKeys);
             KeyboardInput.TypeUnicode(text);
         }
     }
 
-    public void PressKeys(string chord)
+    public void PressKeys(string chord) => PressKeys(chord, beforeKeys: () => { });
+
+    public void PressKeys(string chord, Action beforeKeys)
+    {
+        BeforeKeys(beforeKeys);
+        KeyboardInput.PressChord(chord);
+    }
+
+    public void WaitForModifiers() => KeyboardInput.WaitForModifiersReleased();
+
+    public bool ModifiersDown => KeyboardInput.ModifiersDown();
+
+    private static void BeforeKeys(Action check)
     {
         KeyboardInput.WaitForModifiersReleased();
-        KeyboardInput.PressChord(chord);
+        check();
     }
 
     private static FieldCheck Check(AutomationElement? element)
@@ -100,18 +120,6 @@ internal sealed class WindowsDesktop : IDesktop
         catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or System.Runtime.InteropServices.COMException)
         {
             return FieldCheck.Unknown;
-        }
-    }
-
-    private static AutomationElement? Focused()
-    {
-        try
-        {
-            return AutomationElement.FocusedElement;
-        }
-        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or System.Runtime.InteropServices.COMException)
-        {
-            return null;
         }
     }
 

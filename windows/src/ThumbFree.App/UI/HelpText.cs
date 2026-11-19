@@ -12,8 +12,9 @@ internal static class HelpText
     [
         new("Dictate into any app", [
             "Click where you want to type, then tap Ctrl+Win (press and let go): ThumbFree starts listening. There's nothing to hold.",
-            "Speak naturally. The pill at the bottom of the screen shows your voice level and your words.",
-            "Tap Ctrl+Win again when you're done: your text is typed where the cursor is.",
+            "Speak naturally. The pill at the bottom of the screen shows your voice level and the words not typed yet.",
+            "With Live typing on, each phrase is typed as soon as you've moved on to the next one. Lists and emails wait until you finish, so they can be laid out.",
+            "Tap Ctrl+Win again when you're done: the rest is typed where the cursor is.",
             "Esc cancels. Ctrl+Win+Space works the same as Ctrl+Win.",
             $"{settings.PasteLastHotkey} pastes the last dictation again.",
             "A dictation finishes by itself after 10 minutes, so the microphone is never left on.",
@@ -53,7 +54,7 @@ internal static class HelpText
         new("History and lost text", [
             "Every dictation is kept for 30 days on this PC (500 at most). Click one in History, on Home or in the tray menu to copy it.",
             "Nothing from password fields is kept. Turn History off or clear it in Settings.",
-            "If a text box closes before your words are ready, they're never typed anywhere else: a notification keeps them; click it to copy.",
+            "Your words only ever go into the box you started in. If you click into another box or window while speaking, or the box closes, they're never typed anywhere else: a notification keeps them; click it to copy.",
             "If the microphone goes silent mid-dictation (a call or another app took it), ThumbFree tells you straight away.",
         ]),
         new("Privacy", [

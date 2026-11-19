@@ -7,6 +7,7 @@ internal static partial class Win32
 {
     public const int WM_HOTKEY = 0x0312;
     public const int SW_RESTORE = 9;
+    public const uint GA_PARENT = 1;
     public const uint GA_ROOT = 2;
     public const uint GW_OWNER = 4;
     public const int GWL_EXSTYLE = -20;
@@ -133,8 +134,20 @@ internal static partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, nint lParam);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumChildWindows(nint parent, EnumWindowsProc lpEnumFunc, nint lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(nint hWnd, StringBuilder className, int maxCount);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(nint hWnd, StringBuilder text, int maxCount);
+
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
+    public static partial nint SendMessageTimeout(nint hWnd, uint msg, nint wParam, nint lParam, uint flags, uint timeoutMs, out nint result);
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static partial nint GetWindowLongPtr(nint hWnd, int index);
@@ -183,6 +196,27 @@ internal static partial class Win32
         var sb = new StringBuilder(512);
         GetWindowText(hWnd, sb, sb.Capacity);
         return sb.ToString();
+    }
+
+    /// <summary>The child windows of <paramref name="parent"/>, at any depth, whose window class is <paramref name="className"/>.</summary>
+    public static List<nint> FindChildWindows(nint parent, string className)
+    {
+        var found = new List<nint>();
+        var name = new StringBuilder(256);
+        EnumChildWindows(
+            parent,
+            (child, _) =>
+            {
+                name.Clear();
+                if (GetClassName(child, name, name.Capacity) > 0 && name.ToString() == className)
+                {
+                    found.Add(child);
+                }
+
+                return true;
+            },
+            0);
+        return found;
     }
 
     public static bool IsCloaked(nint hWnd) =>

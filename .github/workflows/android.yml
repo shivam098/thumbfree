@@ -4,9 +4,9 @@ name: Android
 on:
   push:
     branches: [main]
-    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml", ".github/workflows/release-windows.yml"]
+    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml"]
   pull_request:
-    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml", ".github/workflows/release-windows.yml"]
+    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml"]
   workflow_dispatch:
 
 concurrency:

@@ -2,7 +2,7 @@
 
 **Type with your voice, not your thumbs. 100% offline.**
 
-ThumbFree turns speech into clean, punctuated text in any app, and your voice never leaves your phone. There's no
+ThumbFree turns speech into clean, punctuated text in any app, and your voice never leaves your phone or PC. There's no
 account and no cloud: speech is recognised on the device, so it works on a plane, in the metro, or with no signal, and
 nobody else ever hears what you said. Most voice-typing apps (Wispr Flow, for example) send every dictation to their
 servers; ThumbFree never does.
@@ -29,10 +29,19 @@ servers; ThumbFree never does.
 | Platform | Status |
 |---|---|
 | Android | **Preview**: voice keyboard and bubble |
-| Windows | Available today as [Voice Dictation](https://github.com/shivam098/windows-dictation); moving here next |
+| Windows | **Preview**: Ctrl+Win in any app, from the tray (replaces [Voice Dictation](https://github.com/shivam098/windows-dictation)) |
 | macOS | Planned |
 
 The full plan is in [docs/PLAN.md](docs/PLAN.md).
+
+## Windows
+
+Download `ThumbFree-x.y.z-win-arm64.zip` (Snapdragon and other ARM PCs) or `ThumbFree-x.y.z-win-x64.zip` (Intel and
+AMD) from [Releases](https://github.com/shivam098/thumbfree/releases), unzip it and run `ThumbFree.exe`. A short
+guide sets up the microphone and the speech model. Then click into any text box, **tap Ctrl+Win**, speak, and tap it
+again. With Live typing, each phrase is typed as soon as you've moved on to the next one.
+
+Everything else, from the models to the settings file and how to build it, is in [docs/windows.md](docs/windows.md).
 
 ## Android
 
@@ -102,4 +111,6 @@ Live English: the Kroko streaming model by [Banafo](https://huggingface.co/Banaf
 CC BY-SA 4.0) and the [Edge-Punct-Casing](https://huggingface.co/frankyoujian/Edge-Punct-Casing)
 punctuation model (Apache-2.0), both unmodified and downloaded separately from the app.
 Hindi + English: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) running quantized conversions of
-Oriserve's Whisper Hindi-to-Hinglish models (Apache-2.0).
+Oriserve's Whisper Hindi-to-Hinglish models (Apache-2.0). On Windows, through [Whisper.net](https://github.com/sandrohanea/whisper.net)
+(MIT), with [Silero VAD](https://github.com/snakers4/silero-vad) (MIT) to find pauses and
+[NAudio](https://github.com/naudio/NAudio) (MIT) for the microphone.

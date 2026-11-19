@@ -8,8 +8,9 @@ ThumbFree is the dictation half of Voice Assistant **without "Hey Jarvis"**: no 
 navigation, no idea board. The microphone is on only while you dictate, so there's no always-on listening and no battery
 drain when idle.
 
-**Status (Nov 2026):** Android is built (v0.5.0: voice keyboard and bubble with tap-to-start / tap-to-finish, first-run guide; Google Play ready: Android 16 target, app bundle). Windows exists as Voice
-Dictation 0.3. iPhone and Mac are next. [Section 3](#3-feature-reference-built-on-android-copy-to-every-platform) is the
+**Status (Nov 2026):** Android is built (v0.7.0: voice keyboard and bubble with tap-to-start / tap-to-finish, live
+typing, History, first-run guide; Google Play ready). Windows is built (v0.8.0: every section 3 feature, replacing Voice
+Dictation). iPhone and Mac are next. [Section 3](#3-feature-reference-built-on-android-copy-to-every-platform) is the
 feature reference that every platform implements.
 
 ## 1. Positioning: offline is the selling point
@@ -225,7 +226,7 @@ with no special chip, by letting people pick a **lighter streaming model**.
 
 | English tier | Model | Size | Live typing | Notes |
 |---|---|---|---|---|
-| **Live** (default for new installs) | Kroko streaming Zipformer (Banafo, CC BY-SA 4.0) + Edge-Punct-Casing punctuation (Apache-2.0) via sherpa-onnx | 79 MB | **Streaming**: text after every 100 ms of audio | Cased words; a finished phrase (0.8 s pause) gets punctuation. Measured on a Snapdragon X laptop (2 threads): ~0.05 × real time |
+| **Live** (default for new installs) | Kroko streaming Zipformer (Banafo, CC BY-SA 4.0) + Edge-Punct-Casing punctuation (Apache-2.0) via sherpa-onnx | 79 MB | **Streaming**: text after every 100 ms of audio | Cased words; a finished phrase (0.8 s pause) gets punctuation. Measured on a Snapdragon X laptop (2 threads): 0.024 × real time, but each word arrives about 1 s after it's said (sherpa-onnx decodes 1.28 s windows), so finishing pads silence until two windows past the end are decoded |
 | **Standard** | Parakeet TDT 110M | 137 MB | Re-reads the newest audio every 0.5 s | Slightly more accurate final text |
 | **Accurate** | Parakeet TDT 0.6B v2 | 661 MB | No (types when you finish) | Best accuracy, needs 6 GB+ |
 
@@ -263,7 +264,7 @@ with no special chip, by letting people pick a **lighter streaming model**.
 | Android bubble | Phase 1: the live words show in the bubble's pill; typed when you finish. Phase 2: type finished phrases into the other app at each pause (accessibility `ACTION_SET_TEXT` is all-or-nothing, so no underline) | Phase 1 built |
 | iPhone keyboard | `textDocumentProxy.setMarkedText(_:selectedRange:)` (marked = underlined), then `unmarkText()` + `insertText`. The app streams partial text to the keyboard through the App Group + Darwin notification every ~200 ms. Kroko via sherpa-onnx iOS | Design |
 | Mac | Type each **finished phrase** at a pause (paste, same-field check, 4.3); the pill shows the phrase still being spoken. Marked text isn't available to other apps | Design |
-| Windows | Same as Mac: phrases typed at pauses, the partial in the pill. sherpa-onnx C# API with the same Kroko files | Design |
+| Windows | Same as Mac: each finished phrase is typed once the next one has started (text typed into another app can't be taken back, so only final text goes in), the rest in the pill. Kroko streams through the sherpa-onnx C# API; Parakeet (both sizes: a PC keeps up with 0.6B) and Hindi + English Standard re-read the newest audio every 0.5 s | **Built (v0.8)** |
 
 **Tests:** core tests for the punctuation merge and joining; an on-device test feeds a 10 s dictation in 100 ms chunks
 and checks that text arrives while speaking, that it keeps up with real time, the word-list fix, punctuation, and abort.
@@ -280,9 +281,10 @@ happened in the other app, the words are here.
   as one line per entry (`time<TAB>app<TAB>text`, escaped), with the format and pruning in the shared core (`History`) so
   every platform reads it the same way.
 - **Never kept:** password / secure fields. Fields marked private where the platform says so (Android keyboard:
-  `IME_FLAG_NO_PERSONALIZED_LEARNING`; iPhone: secure fields never reach a custom keyboard). Where the platform can't
-  tell (the Android bubble, Mac, Windows), only passwords are excluded: History is local text the person can clear or
-  turn off, unlike voice samples (3.8), which exist to be shared and so stay keyboard-only.
+  `IME_FLAG_NO_PERSONALIZED_LEARNING`; iPhone: secure fields never reach a custom keyboard; Windows: browser windows
+  whose title says they're private). Where the platform can't tell (the Android bubble, Mac, most Windows windows), only
+  passwords are excluded: History is local text the person can clear or turn off, unlike voice samples (3.8), which
+  exist to be shared and so are kept only where privacy is known.
 - **On by default**, with a **Keep history** switch. Turning it off deletes everything, after a confirmation.
   **Clear history** deletes all of it. Excluded from cloud backups. Uninstalling removes it.
 - **Screen:** a list of cards (the text, up to 6 lines; "WhatsApp · 2 minutes ago"). **Tap copies** to the clipboard.
@@ -295,7 +297,7 @@ happened in the other app, the words are here.
 | Android | `noBackupFilesDir/history.txt`, written on its own thread | Settings, hold ↺ on the keyboard | **Built (v0.7)** |
 | iPhone | App Group container (the keyboard writes, the app shows), `NSFileProtectionComplete`, excluded from iCloud backup | The app, and a History key on the keyboard (it can insert as well as copy) | Design |
 | Mac | `~/Library/Application Support/ThumbFree/history.txt`, excluded from Time Machine | The menu-bar menu ("History…", the last 5 inline: click copies) | Design |
-| Windows | `%LOCALAPPDATA%\ThumbFree\history.txt` (reuse the History tab of the Voice Assistant 0.9 app window, with this format and these rules) | Tray menu and the app window | Design |
+| Windows | `%LOCALAPPDATA%\ThumbFree\history.txt`; also skips windows that say they're private (InPrivate, Firefox private browsing) | The app window's History page, Home, and the tray menu | **Built (v0.8)** |
 
 ## 4. Platform designs
 
@@ -412,6 +414,41 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
   - Opt-in samples.
 - Also add: the app window (Home, Settings, History, Help) from Voice Assistant 0.9.
 - Distribution: zips on GitHub Releases, then winget. Code signing optional.
+- **Built in v0.8 (replaces Voice Dictation, whose settings, dictionary and models carry over):**
+  - The text box is read once, when dictation starts (UI Automation: password, single- or multi-line including ARIA,
+    search and address bars, email apps and webmail, the text before the cursor). Right before each paste or key
+    press goes out (after the clipboard holds the text, and again while a modifier key is held), the same window and
+    the same element must have the focus; otherwise nothing more is typed and the whole dictation goes to the
+    tap-to-copy notification (3.6). A password field found while typing refuses the dictation (nothing kept) only if
+    it's the dictation's own box, or in its window when the box couldn't be told apart; a password box elsewhere
+    detaches it like any other box.
+  - Chromium (Chrome, Edge, Electron and WebView2 apps) builds its pages' accessibility tree only when an assistive
+    tool asks; until then the focus is just a pane, with nothing about the text box. So when a dictation starts and a
+    pane has the focus in a window with Chromium pages, ThumbFree asks the way screen readers do
+    (`ChromiumAccessibility.Wake`). It looks up the window's documents by control type and reads their names through
+    UI Automation, since Chromium turns on basic page accessibility for the whole app once a client reads such
+    properties of a page. It also sends the "screen reader honeypot" (`WM_GETOBJECT` with object id 1) to the page
+    windows (`Chrome_RenderWidgetHostHWND`) with an MSAA name read. Then the focus is read again for up to 1.2 s. The
+    app keeps page accessibility on while it runs (a tab hidden for 5 minutes drops its tree until it's shown again).
+    Nothing is cached, so a restarted app is asked again; the checks before each typed piece read the focus as it is.
+  - Chrome 157 keeps its page windows out of the browser window (in a separate or hidden top-level window), so UI
+    Automation reports the focus as the browser's pane even once the page is there. The focused page element is then
+    the deepest element with the keyboard focus under that pane, or else in the window (`FocusedInPage`), and its ARIA
+    properties are looked up by runtime id. If it can't be found, only the window is compared while typing.
+  - Measured on Chrome 157 (fresh profile, window in the background): reading the documents' properties brought the
+    page's text boxes within a second. The honeypot with a name read did once (in about 80 ms) and didn't another time,
+    when the only page window was parked in Chromium's hidden window. Without any of this, password fields in a fresh
+    Chrome weren't detected.
+  - Recognition runs on one speech thread; a model loads when a dictation needs it (audio is kept meanwhile) and is
+    unloaded after 3 idle minutes.
+  - Silero (whisper.cpp's VAD) finds the pauses for Whisper and Parakeet: phrases end at 0.7 s, and long dictation is
+    cut into pieces of at most 14 s (Whisper) or 30 s (Parakeet).
+  - Samples (3.8): never from web browsers, because a browser can't reliably say whether a window is private (Chrome's
+    and Brave's private windows have no marker in their titles, and other browsers translate theirs). Other desktop
+    apps and the guide's practice boxes are fine.
+  - Settings apply without a restart, except the hotkeys, the microphone, threads, snippets and new-line keys.
+  - `--self-test` runs scripts through the real host: scripted phrases typed live or at the end, and recordings
+    played as if spoken (tests/DictationLab).
 
 ## 5. Architecture: one behaviour, native apps, shared test data
 
@@ -427,7 +464,7 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
 |---|---|---|---|
 | Android | Kotlin | `android/core` (Kotlin, JVM-testable) | sherpa-onnx AAR + whisper.cpp via JNI |
 | iPhone + Mac | Swift / SwiftUI + AppKit | **Recommended: reuse `android/core` through Kotlin Multiplatform** as an XCFramework (one source for Android, iPhone and Mac). Fallback: a Swift port held to the same vectors. | sherpa-onnx xcframework + whisper.cpp (Metal / Core ML) |
-| Windows | C# / WPF | `VoiceDictation.Core` (the C# reference) | Whisper.net today; add sherpa-onnx (C# API) for Parakeet |
+| Windows | C# / WPF | `windows/src/ThumbFree.Core` (the C# reference, held to the same vectors) | sherpa-onnx (C# API) for Kroko and Parakeet, Whisper.net for Hindi + English |
 
 **Kotlin Multiplatform for Apple** means one fix to the filler or layout rules reaches Android, iPhone and Mac at once.
 
@@ -461,8 +498,8 @@ thumbfree/
 | **Apple spike** (week 1) | (a) The `android/core` KMP framework passing both vector files on the iOS Simulator and macOS; (b) iPhone: keyboard Start → app session → swipe back → mic in the keyboard → text inserted, on a real iPhone; (c) Parakeet 110M speed on iPhone and Mac | All three work, or the fallback (Swift port, different session design) is chosen |
 | **iPhone 0.x** (weeks 2–5) | Keyboard + app session, models, guide, notifications, Shortcuts action, opt-in samples | TestFlight with the acceptance list (Messages, WhatsApp, Mail, Notes, Safari) |
 | **Mac 0.x** (weeks 4–7) | Menu bar, hotkey, pill, paste with the same-field check, guide, optional floating mic | Notarized `.dmg`; acceptance on a real Mac (Notes, Mail, Safari, Chrome, Slack, VS Code, Terminal) |
-| **Windows live typing** | Kroko through the sherpa-onnx C# API; phrases typed at pauses, the partial in the pill (3.10); a Live / Standard model choice | Real-app labs (Notepad, Word, Teams, browser, VS Code) |
-| **Windows 1.0** | Section 3 features on top of Voice Dictation 0.3; archive `windows-dictation` | Real-app labs pass; winget |
+| **Windows 0.8** ✅ | Every section 3 feature on Windows, replacing Voice Dictation: Kroko live typing (phrases typed at pauses, the rest in the pill), Parakeet, smart formatting, the word list, History, the app window and first-run guide, notifications, opt-in samples | Released v0.8.0; CI: Core, Speech and App tests, x64 and ARM64 builds; self-test labs on a Chrome test page |
+| **Windows 1.0** | Real-app labs (Notepad, Word, Teams, WhatsApp, Outlook, VS Code); archive `windows-dictation`; winget | Real-app labs pass; winget |
 | **Later** | Auto language pick (English word overlap ≥ 0.5 in 16/17 English clips, 0/6 Hinglish); learn from corrections; NPU / Neural Engine for Apex | |
 
 One product version across platforms; release assets per platform.

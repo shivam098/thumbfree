@@ -8,13 +8,12 @@ namespace ThumbFree.App.Platform;
 /// </summary>
 internal sealed class SoundFeedback : IDisposable
 {
-    private readonly bool _enabled;
     private readonly object _gate = new();
     private WaveOutEvent? _output;
 
     public SoundFeedback(bool enabled)
     {
-        _enabled = enabled;
+        Enabled = enabled;
     }
 
     public enum Cue
@@ -25,9 +24,12 @@ internal sealed class SoundFeedback : IDisposable
         Standby,
     }
 
+    /// <summary>"Sounds" in Settings; changes apply to the next tone.</summary>
+    public bool Enabled { get; set; }
+
     public void Play(Cue cue)
     {
-        if (!_enabled)
+        if (!Enabled)
         {
             return;
         }

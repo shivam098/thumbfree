@@ -1,6 +1,7 @@
 using System.Windows;
 using ThumbFree.App.UI;
 using ThumbFree.Core;
+using ThumbFree.Speech;
 
 namespace ThumbFree.App;
 
@@ -17,7 +18,6 @@ public partial class App
     private GuideWindow? _guide;
     private EventWaitHandle? _showEvent;
     private RegisteredWaitHandle? _showWait;
-    private bool _syncingLanguage;
 
     /// <summary>A launch from the Start menu while ThumbFree runs opens the running copy's window instead.</summary>
     private static bool ShowRunningCopy()
@@ -34,7 +34,7 @@ public partial class App
         return true;
     }
 
-    private AppServices CreateServices(AppSettings settings)
+    private AppServices CreateServices(AppSettings settings, ModelStore models)
     {
         // The stores raise their events through the UI thread's context, captured when they're made.
         if (SynchronizationContext.Current is null)
@@ -48,9 +48,10 @@ public partial class App
             Settings = store,
             History = new HistoryStore(AppPaths.HistoryFile, () => store.Current.KeepHistory),
             Samples = new SampleStore(AppPaths.SamplesDir, () => store.Current.SaveSamples, typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0"),
-            Models = new ModelDownloads(new OfflineModelManager()),
+            Models = new ModelDownloads(new StoreModelManager(models)),
             State = new DictationState(),
             Environment = new WindowsEnvironment(),
+            Layout = (text, field) => Layout.Apply(text, new LayoutContext(field.MultiLine, field.AtStart, field.Email)),
         };
         services.SetPaused = SetPaused;
         services.ShowGuide = ShowGuide;
@@ -62,43 +63,19 @@ public partial class App
         return services;
     }
 
-    /// <summary>
-    /// Feeds the window from the dictation host. The language lives in settings.json now while this host still keeps
-    /// it in flag files, so changes are mirrored both ways until the host reads <see cref="AppSettings.Language"/>.
-    /// </summary>
+    /// <summary>Feeds the window and the pill from the dictation host and the settings.</summary>
     private void WireUi(DictationHost host, AppServices services)
     {
         host.Status += services.State.Report;
         host.Activity += services.State.SetActivity;
-        host.DictationLanguageChanged += (hinglish, accurate) =>
-        {
-            _syncingLanguage = true;
-            try
-            {
-                services.Settings.Update(s =>
-                {
-                    s.Language = hinglish ? Language.Hinglish : Language.English;
-                    s.HinglishTier = accurate ? Tier.Accurate : Tier.Standard;
-                });
-            }
-            finally
-            {
-                _syncingLanguage = false;
-            }
-        };
         services.Settings.Changed += change =>
         {
-            if (!_syncingLanguage && change.Has(nameof(AppSettings.Language), nameof(AppSettings.HinglishTier)))
+            if (change.Has(nameof(AppSettings.Language), nameof(AppSettings.HinglishTier)))
             {
-                host.SetDictationLanguage(services.Current.Language == Language.Hinglish, services.Current.HinglishTier == Tier.Accurate);
+                ShowLanguage(services.Current);
             }
         };
-
-        var hinglish = services.Current.Language == Language.Hinglish;
-        if (hinglish != host.HinglishDictation || (hinglish && (services.Current.HinglishTier == Tier.Accurate) != host.HinglishAccurate))
-        {
-            host.SetDictationLanguage(hinglish, services.Current.HinglishTier == Tier.Accurate);
-        }
+        ShowLanguage(services.Current);
     }
 
     /// <summary>
@@ -108,6 +85,19 @@ public partial class App
     private bool FailedBeforeTray(Exception ex) => new StartupGuard(
         message => System.Windows.MessageBox.Show(message, "ThumbFree", MessageBoxButton.OK, MessageBoxImage.Error),
         () => Shutdown(1)).Handle(ex, trayExists: _tray is not null);
+
+    /// <summary>The pill's language badge.</summary>
+    private void ShowLanguage(AppSettings settings) =>
+        _overlay?.SetDictationLanguage(settings.Language == Language.Hinglish, settings.HinglishTier == Tier.Accurate);
+
+    /// <summary>Alt+Shift+H: English ⇄ Hindi + English, saved in Settings; the tier chosen for each language stays.</summary>
+    private void ToggleLanguage()
+    {
+        if (_services is not null)
+        {
+            LanguageSwitch.Toggle(_services.Settings);
+        }
+    }
 
     /// <summary>First run opens the guide; any other launch by the person opens the window (sign-in starts quietly in the tray).</summary>
     private void OpenAtStart(string[] args)

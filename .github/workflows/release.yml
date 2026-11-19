@@ -1,5 +1,7 @@
-name: Release Android
+name: Release
 
+# One product version, one GitHub release, files for every platform (docs/PLAN.md 6). Each platform builds in its own
+# job; the release is created once, at the end, with all of them and one SHA256SUMS.txt.
 on:
   push:
     tags: ["v*"]
@@ -8,7 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  android:
+    name: Android APKs and bundle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,19 +58,60 @@ jobs:
           keytool -printcert -jarfile "$aab" | tee certs.txt
           if grep -q "CN=Android Debug" certs.txt; then echo "::error::the app bundle is signed with the debug key"; exit 1; fi
           cp "$aab" "dist/ThumbFree-${THUMBFREE_VERSION}-google-play.aab"
-          (cd dist && sha256sum *.apk *.aab > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/*
+
+  windows:
+    name: Windows zips (x64 and ARM64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: The app's version matches the tag
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'.TrimStart('v')
+          $version = ([xml](Get-Content windows/src/ThumbFree.App/ThumbFree.App.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ($version -ne $tag) { Write-Error "ThumbFree.App.csproj says $version but the tag is $tag"; exit 1 }
+      - name: Tests
+        run: dotnet test windows/ThumbFree.slnx -c Release
+      - name: Package (with the Visual C++ runtime)
+        shell: pwsh
+        run: ./windows/scripts/package.ps1 -RequireVcRuntime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: windows/dist/*.zip
+
+  publish:
+    name: GitHub release
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
           pre=""
-          case "$THUMBFREE_VERSION" in 0.*|*-*) pre="--prerelease";; esac
+          case "$version" in 0.*|*-*) pre="--prerelease";; esac
           cat > notes.md <<EOF
-          **Which APK?**
-          - \`ThumbFree-${THUMBFREE_VERSION}.apk\`: install this one. Everything except the bubble.
-          - \`ThumbFree-${THUMBFREE_VERSION}-with-bubble.apk\`: adds the floating bubble (dictate with any keyboard). It uses an accessibility service, so Google Play Protect blocks installing it from a browser or file manager in some countries (India). Install it with \`adb install\`, or wait for the Play Store release.
-          - \`ThumbFree-${THUMBFREE_VERSION}-google-play.aab\`: the bubble edition as an app bundle, for uploading to Google Play (not for installing).
+          **Windows:** \`ThumbFree-${version}-win-x64.zip\` for Intel and AMD PCs, \`ThumbFree-${version}-win-arm64.zip\` for Snapdragon and other ARM PCs. Unzip, run \`ThumbFree.exe\`, then tap Ctrl+Win to dictate.
 
-          Both are signed with the same key: you can switch between them without losing your settings or models.
+          **Android, which APK?**
+          - \`ThumbFree-${version}.apk\`: install this one. Everything except the bubble.
+          - \`ThumbFree-${version}-with-bubble.apk\`: adds the floating bubble (dictate with any keyboard). It uses an accessibility service, so Google Play Protect blocks installing it from a browser or file manager in some countries (India). Install it with \`adb install\`, or wait for the Play Store release.
+          - \`ThumbFree-${version}-google-play.aab\`: the bubble edition as an app bundle, for uploading to Google Play (not for installing).
+
+          Both APKs are signed with the same key: you can switch between them without losing your settings or models.
           EOF
-          gh release create "$GITHUB_REF_NAME" dist/* --title "ThumbFree $THUMBFREE_VERSION" --notes-file notes.md --generate-notes $pre
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "ThumbFree $version" --notes-file notes.md --generate-notes $pre

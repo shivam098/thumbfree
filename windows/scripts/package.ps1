@@ -6,8 +6,9 @@
     For each runtime, publishes a self-contained build and zips it into dist\:
       ThumbFree-<version>-win-x64.zip      Intel/AMD PCs (most Windows laptops/desktops)
       ThumbFree-<version>-win-arm64.zip    ARM PCs (Snapdragon / Surface Pro X / Copilot+ PCs)
-    Without -IncludeModels the app downloads the speech models (~265 MB, SHA-256 verified) on first run.
-    With -IncludeModels the zip also contains them in a "models" folder and works fully offline.
+    Without -IncludeModels the first-run guide downloads the speech model you pick (79 MB for live English, SHA-256
+    verified). With -IncludeModels the zip also contains live English and Silero in a "models" folder and works fully
+    offline.
 
 .EXAMPLE
     .\scripts\package.ps1
@@ -35,7 +36,9 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $RepoRoot 'src\ThumbFree.App\ThumbFree.App.csproj'
 $Dist = Join-Path $RepoRoot 'dist'
 $ModelsSources = @((Join-Path $env:LOCALAPPDATA 'ThumbFree\models'), (Join-Path $env:LOCALAPPDATA 'VoiceDictation\models'), (Join-Path $env:LOCALAPPDATA 'VoiceAssistant\models'))
-$ModelFiles = @('ggml-small.en-q8_0.bin', 'ggml-silero-v6.2.0.bin')
+# Live English (Kroko and its punctuation model) and Silero, which finds pauses for the other models.
+$ModelFiles = @('kroko-en-live\encoder.onnx', 'kroko-en-live\decoder.onnx', 'kroko-en-live\joiner.onnx', 'kroko-en-live\tokens.txt',
+    'kroko-en-live\punct.int8.onnx', 'kroko-en-live\punct-bpe.vocab', 'ggml-silero-v6.2.0.bin')
 
 $dotnet = @((Get-Command dotnet -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1), (Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe')) |
     Where-Object { $_ -and (Test-Path $_) -and ((& $_ --list-sdks 2>$null) -match '^10\.') } | Select-Object -First 1
@@ -107,46 +110,50 @@ foreach ($rid in $Runtime) {
         $models = New-Item -ItemType Directory -Force (Join-Path $folder 'models')
         foreach ($file in $ModelFiles) {
             $source = $ModelsSources | ForEach-Object { Join-Path $_ $file } | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if (-not $source) { throw "Model $file not found in $($ModelsSources -join ' or '). Run the app (or install.ps1) once to download it." }
-            Copy-Item $source $models
+            if (-not $source) { throw "Model $file not found in $($ModelsSources -join ' or '). Download live English in ThumbFree once, then retry." }
+            $target = Join-Path $models $file
+            New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+            Copy-Item $source $target
         }
     }
 
     @"
-VOICE DICTATION $version  ($rid)
-Tap a key, speak, tap again, and your words are typed into any app. Free, and runs fully on this PC.
+THUMBFREE $version  ($rid)
+Tap Ctrl+Win, speak, tap again: your words are typed into any app. Free, private, and runs fully on this PC.
 
 START
   1. Unzip this folder anywhere you like (e.g. Documents).
   2. Double-click ThumbFree.exe.
      Windows may say "Windows protected your PC" because the app isn't code-signed:
      click "More info" -> "Run anyway".
-  3. $(if ($IncludeModels) { 'It is ready in a few seconds.' } else { 'First run downloads the speech model (~265 MB, one time; skipped if Voice Assistant already downloaded it).' })
+  3. A short guide sets up the microphone and $(if ($IncludeModels) { 'shows you around (live English is included).' } else { 'downloads the speech model you pick, once (79 MB for live English).' })
   4. Allow microphone access if Windows asks (Settings > Privacy & security > Microphone > "Let desktop apps access your microphone").
-  Look for the microphone icon in the system tray (bottom-right, maybe under the ^ arrow).
+  The tray icon (bottom-right, maybe under the ^ arrow) opens ThumbFree: Home, Settings, History and Help.
 
 DICTATE
-  Tap Ctrl+Win, speak             -> recording starts (no need to hold); a level meter and your words show live
-  Tap Ctrl+Win again              -> "Transcribing...", then the text is typed where your cursor is
-  Ctrl+Win+Space                  -> same as Ctrl+Win
-  Esc cancels  ·  Alt+Shift+Z pastes the last dictation again
-  Alt+Shift+H switches to Hindi + English (Hindi typed in Roman letters; downloads ~80 MB once) and back;
-  tray > Dictation language has a slower, more accurate Hindi + English option (830 MB download)
+  Click into a text box, tap Ctrl+Win, speak  -> each phrase is typed once you've moved on to the next (Live typing)
+  Tap Ctrl+Win again                         -> the rest is typed; lists and emails are laid out
+  Esc cancels  ·  Ctrl+Win+Space = Ctrl+Win  ·  Alt+Shift+Z types the last dictation again
+  Alt+Shift+H switches between English and Hindi + English (Hindi typed in Roman letters)
   Say "comma", "full stop", "question mark", "new line". "um"/"uh" are removed.
 
+NEVER LOSE A DICTATION
+  Text only goes into the box you started in. If you click elsewhere while speaking, a notification keeps
+  your dictation: click it to copy. History keeps your last 30 days of dictations on this PC.
+
 PRIVACY
-  The microphone is on only from one tap of Ctrl+Win to the next (10 minutes at most; at the limit the text is typed automatically).
-  Speech is transcribed on this PC; audio and text are never uploaded or saved to disk.
+  The microphone is on only from one tap of Ctrl+Win to the next (10 minutes at most).
+  Speech is recognised on this PC; nothing you say is uploaded. The internet is used only to download models.
   Settings: %APPDATA%\ThumbFree\settings.json   Models: $(if ($IncludeModels) { 'the models folder next to the app' } else { '%LOCALAPPDATA%\ThumbFree\models' })
 
-TRAY MENU
-  Pause dictation keys, dictation language, always show status pill, start when I sign in, exit.
-  Don't run Voice Assistant at the same time: both use Ctrl+Win, so text would be typed twice.
+COMING FROM VOICE DICTATION
+  Your settings, dictionary and downloaded models carry over. Exit Voice Dictation and Voice Assistant:
+  they also use Ctrl+Win, so text would be typed twice.
 
 UNINSTALL
-  Exit from the tray, then delete this folder (and %LOCALAPPDATA%\ThumbFree to remove the models).
+  Exit from the tray, then delete this folder (and %LOCALAPPDATA%\ThumbFree and %APPDATA%\ThumbFree).
 
-Source: https://github.com/shivam098/thumbfree
+Guide: https://github.com/shivam098/thumbfree/blob/main/docs/windows.md
 "@ | Set-Content (Join-Path $folder 'README-FIRST.txt') -Encoding UTF8
 
     $zip = "$folder.zip"

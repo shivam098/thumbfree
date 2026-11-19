@@ -113,4 +113,43 @@ public class DictationPreviewTests
         var cut = DictationPreview.FindCommitPoint([Seg(0, 1), Seg(1.5, 14)], Rate * 14, Rate, Rate * 12, Rate * 3);
         Assert.Equal(Rate * 12, cut);
     }
+
+    [Fact]
+    public async Task With_phrases_on_each_pause_ends_a_phrase_transcribed_once_at_final_quality()
+    {
+        var previews = new List<string>();
+        var commits = new List<string>();
+        var preview = new DictationPreview(
+            a => { previews.Add(Label(a)); return Task.FromResult("tentative " + Label(a)); },
+            Detector(Seg(0.2, 2), Seg(3, 5), Seg(5.4, 6.5)),
+            Rate,
+            phrasePauseMs: 700,
+            commit: a => { commits.Add(Label(a)); return Task.FromResult(Label(a)); });
+
+        // 1 s of silence after 2 s ends the first phrase (cut 0.3 s after the speech); 5 to 5.4 s is too short a pause.
+        var text = await preview.UpdateAsync(Audio(6.5));
+        Assert.Equal(["[0-2.3]"], commits);
+        Assert.Equal(["[0-2.3]"], preview.Phrases);
+        Assert.Equal("tentative [2.3-6.5]", preview.Tentative);
+        Assert.Equal("[0-2.3] tentative [2.3-6.5]", text);
+        Assert.Equal(Rate * 23 / 10, preview.CommittedSamples);
+
+        // Trailing silence of 0.7 s ends the phrase being spoken too; nothing is left to preview.
+        commits.Clear();
+        var audio = Audio(7.4);
+        text = await preview.UpdateAsync(audio[preview.CommittedSamples..]);
+        Assert.Equal(["[2.3-6.8]"], commits);
+        Assert.Equal(["[0-2.3]", "[2.3-6.8]"], preview.Phrases);
+        Assert.Equal(string.Empty, preview.Tentative);
+        Assert.Equal("[0-2.3] [2.3-6.8]", text);
+    }
+
+    [Fact]
+    public void A_phrase_ends_only_after_a_long_enough_pause()
+    {
+        Assert.Null(DictationPreview.FindPhraseEnd([Seg(0, 2), Seg(2.5, 4)], Rate * 4, Rate, Rate * 7 / 10));
+        Assert.Null(DictationPreview.FindPhraseEnd([], Rate * 4, Rate, Rate * 7 / 10));
+        Assert.Equal(Rate * 23 / 10, DictationPreview.FindPhraseEnd([Seg(0, 2), Seg(3, 4)], Rate * 4, Rate, Rate * 7 / 10));
+        Assert.Equal(Rate * 43 / 10, DictationPreview.FindPhraseEnd([Seg(0, 2), Seg(2.5, 4)], Rate * 5, Rate, Rate * 7 / 10));
+    }
 }
