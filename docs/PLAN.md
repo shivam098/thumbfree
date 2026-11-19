@@ -493,7 +493,8 @@ thumbfree-android/
 
 The repo was called `thumbfree` until November 2026, when it also held the Windows app. GitHub redirects the old
 address, which apps already installed still use to download speech models: **never create a new repo named
-`shivam098/thumbfree`**, because that would end the redirect.
+`shivam098/thumbfree`**, because that would end the redirect. For the same reason this repo keeps
+`windows/THIRD-PARTY-NOTICES.md` and a `docs/windows.md` that points to thumbfree-windows: Windows 0.8.0 links to both.
 
 ## 6. Phases
 
