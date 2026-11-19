@@ -341,6 +341,40 @@ public sealed class SettingsTests : IDisposable
             AppSettings.Load(path).Replacements);
     }
 
+    [Theory]
+    [InlineData("\"replacements\": { \"caf@\": \"Caf@\", \"journals\": \"genres\" }", "replacements", "an entry in “replacements”")]
+    [InlineData("\"snippets\": { \"sig\": \"Thanks, Ren@\" }", "snippets", "an entry in “snippets”")]
+    [InlineData("\"vocabulary\": \"Caf@\\nGitHub\"", "vocabulary", "“vocabulary”")]
+    [InlineData("\"caf@\": true", null, null)]
+    [InlineData("/* caf@ */ \"x\": 1", null, null)]
+    public void Text_saved_in_another_encoding_costs_only_its_own_setting(string line, string? key, string? named)
+    {
+        var path = _folder.File("settings.json");
+        var original = Ansi("{\n  \"keepHistory\": false,\n  " + line + ",\n  \"insertMethod\": \"Type\"\n}");
+        File.WriteAllBytes(path, original);
+
+        var store = new SettingsStore(AppSettings.Load(path), path);
+
+        Assert.False(store.Current.KeepHistory);
+        Assert.Equal("Type", store.Current.InsertMethod);
+        Assert.Equal(string.Empty, store.Current.Vocabulary);
+        Assert.Empty(store.Current.Snippets);
+        Assert.Equal(key == "replacements" ? new Dictionary<string, string> { ["journals"] = "genres" } : new AppSettings().Replacements, store.Current.Replacements);
+        if (named is null)
+        {
+            Assert.Null(store.LastError);
+        }
+        else
+        {
+            Assert.StartsWith($"In settings.json, {named} has text that isn't UTF-8 (the file may have been saved in another encoding)", store.LastError, StringComparison.Ordinal);
+        }
+
+        Assert.True(store.Update(s => s.SoundFeedback = false));
+        var saved = File.ReadAllBytes(path);
+        Assert.Equal(original.Count(b => b == 0xE9), saved.Count(b => b == 0xE9));
+        Assert.False(AppSettings.Load(path).SoundFeedback);
+    }
+
     [Fact]
     public void Comments_and_formatting_survive_a_save()
     {
@@ -484,4 +518,8 @@ public sealed class SettingsTests : IDisposable
 
     private static JsonObject Read(string path) =>
         JsonNode.Parse(File.ReadAllText(path), documentOptions: new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true })!.AsObject();
+
+    /// <summary>The file as Notepad's "ANSI" would save it: each "@" stands for "é", the single byte E9, which isn't UTF-8.</summary>
+    private static byte[] Ansi(string json) =>
+        json.Split('@').SelectMany((part, i) => (i == 0 ? Array.Empty<byte>() : [0xE9]).Concat(System.Text.Encoding.UTF8.GetBytes(part))).ToArray();
 }

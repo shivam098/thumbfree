@@ -375,17 +375,31 @@ internal sealed class AppSettings
             var entries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var entry in value.EnumerateObject())
             {
-                if (entry.Value.ValueKind == JsonValueKind.String)
+                try
                 {
-                    entries[entry.Name] = entry.Value.GetString()!;
+                    var name = entry.Name;
+                    if (entry.Value.ValueKind == JsonValueKind.String)
+                    {
+                        entries[name] = entry.Value.GetString()!;
+                    }
+                    else
+                    {
+                        _problems[key] = $"In settings.json, “{key}” should have text in quotes for “{name}”, so that entry is left out.";
+                    }
                 }
-                else
+                catch (InvalidOperationException)
                 {
-                    _problems[key] = $"In settings.json, “{key}” should have text in quotes for “{entry.Name}”, so that entry is left out.";
+                    _problems[key] = NotUtf8($"an entry in “{key}”", "so that entry is left out");
                 }
             }
 
             property.SetValue(this, entries);
+            return;
+        }
+
+        if (value.ValueKind == JsonValueKind.String && !IsUtf8(value))
+        {
+            _problems[key] = NotUtf8($"“{key}”", "so ThumbFree uses its default for it");
             return;
         }
 
@@ -402,6 +416,24 @@ internal sealed class AppSettings
         catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException or ArgumentException or FormatException or OverflowException)
         {
             _problems[key] = WrongValue(key, Expected(property.PropertyType));
+        }
+    }
+
+    /// <summary>"…has text that isn't UTF-8": a file saved as ANSI turns "café" into a byte that can't be read as text.</summary>
+    private static string NotUtf8(string what, string consequence) =>
+        $"In settings.json, {what} has text that isn't UTF-8 (the file may have been saved in another encoding), {consequence}.";
+
+    /// <summary>False for text that can't be read (it would throw): bytes that aren't UTF-8.</summary>
+    private static bool IsUtf8(JsonElement text)
+    {
+        try
+        {
+            _ = text.GetString();
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
         }
     }
 
