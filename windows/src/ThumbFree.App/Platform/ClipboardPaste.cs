@@ -10,70 +10,129 @@ namespace ThumbFree.App.Platform;
 /// </summary>
 internal static partial class ClipboardPaste
 {
+    /// <summary>How many times the text is put on the clipboard again when something else was copied before Ctrl+V.</summary>
+    private const int MaxPuts = 2;
+
     /// <summary>How long the target app gets to read the clipboard before it is restored.</summary>
     public static int RestoreDelayMs { get; set; } = 350;
+
+    /// <summary>The clipboard and Ctrl+V, as <see cref="Paste(string, Action?, IPasteClipboard)"/> uses them; faked in tests.</summary>
+    internal interface IPasteClipboard
+    {
+        /// <summary>
+        /// Puts <paramref name="text"/> on the clipboard, kept out of Clipboard History and the cloud clipboard, and
+        /// returns what was there to put back, and the clipboard's sequence number after.
+        /// </summary>
+        (object? Previous, uint Ours) Put(string text);
+
+        /// <summary>The clipboard's sequence number now: it changes whenever anything is copied.</summary>
+        uint Sequence { get; }
+
+        /// <summary>Presses Ctrl+V and gives the app time to read the clipboard.</summary>
+        void PressPaste();
+
+        /// <summary>Puts <paramref name="previous"/> back, unless something was copied since <paramref name="ours"/>.</summary>
+        void Restore(object? previous, uint ours);
+    }
 
     /// <summary>
     /// Puts <paramref name="text"/> on the clipboard and presses Ctrl+V, then puts the previous clipboard back.
     /// <paramref name="beforeKeys"/> runs right before Ctrl+V; if it throws, nothing is pasted and the clipboard is put back.
     /// </summary>
-    public static void Paste(string text, Action? beforeKeys = null)
-    {
-        object? previous = null;
-        uint ourSequence = 0;
-        RunSta(() =>
-        {
-            previous = Snapshot();
-            var data = new System.Windows.DataObject();
-            data.SetText(text, System.Windows.TextDataFormat.UnicodeText);
-            data.SetData("ExcludeClipboardContentFromMonitorProcessing", new MemoryStream([0, 0, 0, 0]));
-            data.SetData("CanIncludeInClipboardHistory", new MemoryStream([0, 0, 0, 0]));
-            data.SetData("CanUploadToCloudClipboard", new MemoryStream([0, 0, 0, 0]));
-            SetWithRetry(data);
-            ourSequence = GetClipboardSequenceNumber();
-        });
+    public static void Paste(string text, Action? beforeKeys = null) => Paste(text, beforeKeys, SystemClipboard.Instance);
 
-        try
+    /// <summary>
+    /// <see cref="Paste(string, Action?)"/>. Something copied while <paramref name="beforeKeys"/> ran (Ctrl+C or Ctrl+X
+    /// while the paste waits for Ctrl to be let go) becomes what's put back: the text is put on the clipboard again and
+    /// checked again, and nothing is pasted if the clipboard keeps changing.
+    /// </summary>
+    internal static void Paste(string text, Action? beforeKeys, IPasteClipboard clipboard)
+    {
+        for (var put = 1; ; put++)
         {
-            beforeKeys?.Invoke();
-        }
-        catch (Exception)
-        {
+            var (previous, ours) = clipboard.Put(text);
             try
             {
-                Restore(previous, ourSequence);
+                beforeKeys?.Invoke();
             }
-            catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
+            catch (Exception)
             {
-                // The reason not to paste matters more than a busy clipboard.
+                try
+                {
+                    clipboard.Restore(previous, ours);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
+                {
+                    // The reason not to paste matters more than a busy clipboard.
+                }
+
+                throw;
             }
 
-            throw;
-        }
-
-        KeyboardInput.PressChord("Ctrl+V");
-        Thread.Sleep(RestoreDelayMs);
-        Restore(previous, ourSequence);
-    }
-
-    private static void Restore(object? previous, uint ourSequence) =>
-        RunSta(() =>
-        {
-            if (GetClipboardSequenceNumber() != ourSequence)
+            if (clipboard.Sequence == ours)
             {
-                // The user (or the app) put something new on the clipboard; leave it alone.
+                clipboard.PressPaste();
+                clipboard.Restore(previous, ours);
                 return;
             }
 
-            if (previous is System.Windows.DataObject restore)
+            if (put == MaxPuts)
             {
-                SetWithRetry(restore);
+                throw new InvalidOperationException("The clipboard kept changing, so nothing was pasted.");
             }
-            else
+        }
+    }
+
+    /// <summary>Windows' clipboard, through a short-lived STA thread, and Ctrl+V.</summary>
+    private sealed class SystemClipboard : IPasteClipboard
+    {
+        public static readonly SystemClipboard Instance = new();
+
+        public uint Sequence => GetClipboardSequenceNumber();
+
+        public (object? Previous, uint Ours) Put(string text)
+        {
+            object? previous = null;
+            uint ours = 0;
+            RunSta(() =>
             {
-                System.Windows.Clipboard.Clear();
-            }
-        });
+                previous = Snapshot();
+                var data = new System.Windows.DataObject();
+                data.SetText(text, System.Windows.TextDataFormat.UnicodeText);
+                data.SetData("ExcludeClipboardContentFromMonitorProcessing", new MemoryStream([0, 0, 0, 0]));
+                data.SetData("CanIncludeInClipboardHistory", new MemoryStream([0, 0, 0, 0]));
+                data.SetData("CanUploadToCloudClipboard", new MemoryStream([0, 0, 0, 0]));
+                SetWithRetry(data);
+                ours = GetClipboardSequenceNumber();
+            });
+            return (previous, ours);
+        }
+
+        public void PressPaste()
+        {
+            KeyboardInput.PressChord("Ctrl+V");
+            Thread.Sleep(RestoreDelayMs);
+        }
+
+        public void Restore(object? previous, uint ours) =>
+            RunSta(() =>
+            {
+                if (GetClipboardSequenceNumber() != ours)
+                {
+                    // The user (or the app) put something new on the clipboard; leave it alone.
+                    return;
+                }
+
+                if (previous is System.Windows.DataObject restore)
+                {
+                    SetWithRetry(restore);
+                }
+                else
+                {
+                    System.Windows.Clipboard.Clear();
+                }
+            });
+    }
 
     /// <summary>Copies every clipboard format that can be read, so it can be put back after pasting.</summary>
     private static System.Windows.DataObject? Snapshot()

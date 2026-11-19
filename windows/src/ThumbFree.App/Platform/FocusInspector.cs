@@ -37,6 +37,9 @@ internal static class FocusInspector
     private const int EsMultiline = 0x0004;
     private const int GwlStyle = -16;
 
+    /// <summary>How long the same-box check may search a Chromium window for the focused page element.</summary>
+    private const int ChromiumCheckMs = 1500;
+
     private static readonly HashSet<string> EmailProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "OUTLOOK", "olk", "HxOutlook", "thunderbird", "Mailbird", "eM Client", "MailClient", "Spark",
@@ -90,7 +93,7 @@ internal static class FocusInspector
     {
         var root = window != 0 ? window : Win32.GetAncestor(Win32.GetForegroundWindow(), Win32.GA_ROOT);
         var focused = Focused(root);
-        if (focused is null || !IsPane(focused) || root == 0 || !ChromiumAccessibility.Wake(root))
+        if (focused is null || !IsUnresolved(focused) || root == 0 || !ChromiumAccessibility.Wake(root))
         {
             return focused;
         }
@@ -99,14 +102,14 @@ internal static class FocusInspector
         while (waited.ElapsedMilliseconds < 1200)
         {
             Thread.Sleep(50);
-            if (Focused(root) is { } now && !IsPane(now))
+            if (Focused(root) is { } now && !IsUnresolved(now))
             {
                 Log.Info($"web page accessibility on in {waited.ElapsedMilliseconds} ms");
                 return now;
             }
         }
 
-        Log.Info("the focus stayed on a pane in a Chromium window");
+        Log.Info("the focus stayed on a pane or a page in a Chromium window");
         return Focused(root) ?? focused;
     }
 
@@ -132,8 +135,10 @@ internal static class FocusInspector
 
     /// <summary>
     /// True when the field that has focus now is <paramref name="start"/>'s (same top-level window and, when UI
-    /// Automation identified it, the same element). Null when it can't be checked in time, or when the focus is a pane
-    /// in a Chromium window whose page element can't be found: then only the window is known to be the same.
+    /// Automation identified it, the same element). Null when it can't be checked in time. In a window with Chromium
+    /// pages the box is found by a search (<see cref="Focused"/>), so a pane it can't see into, or a search that doesn't
+    /// finish in <see cref="ChromiumCheckMs"/>, counts as another box: a tab still building its page after Ctrl+Tab
+    /// mustn't get the dictation.
     /// </summary>
     public static bool? IsSameField(FocusedField start, WindowInfo? now, int timeoutMs = 600)
     {
@@ -147,27 +152,29 @@ internal static class FocusInspector
             return true;
         }
 
+        var chromium = ChromiumAccessibility.PageWindows(now.Handle).Count > 0;
+        bool? unknown = chromium ? false : null;
         try
         {
             var check = Task.Run(() =>
             {
                 if (Focused(now.Handle) is not { } focused)
                 {
-                    return (bool?)null;
+                    return unknown;
                 }
 
-                if (IsPane(focused) && ChromiumAccessibility.PageWindows(now.Handle).Count > 0)
+                if (chromium && IsPane(focused))
                 {
-                    return null;
+                    return false;
                 }
 
-                return Id(focused) is { } id ? id.AsSpan().SequenceEqual(start.ElementId) : null;
+                return Id(focused) is { } id ? id.AsSpan().SequenceEqual(start.ElementId) : unknown;
             });
-            return check.Wait(timeoutMs) ? check.Result : null;
+            return check.Wait(chromium ? ChromiumCheckMs : timeoutMs) ? check.Result : unknown;
         }
         catch (AggregateException)
         {
-            return null;
+            return unknown;
         }
     }
 
@@ -196,9 +203,10 @@ internal static class FocusInspector
             var lines = multiLine switch { true => " multi-line", false => " single-line", null => string.Empty };
             var kind = $"{controlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal)}{lines}{(search ? " search" : string.Empty)}{(email ? " email" : string.Empty)}{(password ? " password" : string.Empty)}{(privateWindow ? " private" : string.Empty)}";
 
-            // A pane in a Chromium window is a page whose accessibility tree isn't there yet: once it is, the focus is the
-            // text box, a different element, so only the window is compared while typing.
-            var id = controlType == ControlType.Pane && ChromiumAccessibility.PageWindows(window.Handle).Count > 0 ? null : Id(element);
+            // A pane or a page's document in a Chromium window is a page whose box couldn't be found (its accessibility
+            // tree isn't there yet): once it is, the focus is the text box, a different element, so only the window is
+            // compared while typing.
+            var id = IsUnresolved(element) && ChromiumAccessibility.PageWindows(window.Handle).Count > 0 ? null : Id(element);
             return new FocusedField(window, id, password, multiLine, search, email, privateWindow, before, caretKnown, kind);
         }
         catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
@@ -295,6 +303,20 @@ internal static class FocusInspector
     private static int[]? Id(AutomationElement element) => TryGet(element.GetRuntimeId);
 
     private static bool IsPane(AutomationElement element) => TryGet(() => element.Current.ControlType) == ControlType.Pane;
+
+    /// <summary>
+    /// A pane, or a Chromium page's document: the focus as a Chromium app reports it before its page's accessibility is
+    /// on (or while the focus isn't in a box).
+    /// </summary>
+    private static bool IsUnresolved(AutomationElement element)
+    {
+        if (TryGet(() => element.Current.ControlType) is not { } type)
+        {
+            return false;
+        }
+
+        return type == ControlType.Pane || (type == ControlType.Document && TryGet(() => element.Current.FrameworkId) == "Chrome");
+    }
 
     private static T? TryGet<T>(Func<T> read)
         where T : class
