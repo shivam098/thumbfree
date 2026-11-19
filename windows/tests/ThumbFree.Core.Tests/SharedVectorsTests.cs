@@ -33,6 +33,31 @@ public class SharedVectorsTests
 
         Assert.True(failures.Count == 0, $"{failures.Count} of {rows.Count} vectors differ:\n" + string.Join("\n", failures.Take(25)));
     }
+
+    /// <summary>The same path as the Android keyboard: the formatter (default options), then layout.</summary>
+    [Fact]
+    public void Layout_matches_the_shared_vectors()
+    {
+        var formatter = new DictationFormatter();
+        var rows = Vectors.Rows("layout.tsv");
+        Assert.True(rows.Count > 20, $"expected the layout vectors, found {rows.Count} rows");
+
+        var failures = new List<string>();
+        foreach (var row in rows)
+        {
+            var cells = row.Split('\t');
+            Assert.True(cells.Length == 3, $"bad row: {row}");
+            var flags = cells[0];
+            var context = new LayoutContext(MultiLine: flags.Contains('m'), AtStart: flags.Contains('s'), Email: flags.Contains('e'));
+            var actual = Layout.Apply(formatter.Format(Vectors.Unescape(cells[1])), context);
+            if (actual != Vectors.Unescape(cells[2]))
+            {
+                failures.Add($"  [{flags}] {cells[1]}\n     expected: {cells[2]}\n     actual:   {Vectors.Escape(actual)}");
+            }
+        }
+
+        Assert.True(failures.Count == 0, $"{failures.Count} of {rows.Count} layout vectors differ:\n" + string.Join("\n", failures));
+    }
 }
 
 /// <summary>Reads tests/vectors/*.tsv (one row per line, # comments, backslash escapes).</summary>
