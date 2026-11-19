@@ -203,7 +203,7 @@ internal static class SelfTest
                     }
 
                     var pass = name.Contains(expected, StringComparison.OrdinalIgnoreCase);
-                    Line($"   {(pass ? "PASS" : "FAIL")}: focused control {(pass ? "has" : "does not have")} the expected name{(pass ? string.Empty : $" (focused: {ReadFocusedText().Type})")}");
+                    Line($"   {(pass ? "PASS" : "FAIL")}: focused control {(pass ? "has" : "does not have")} the expected name{(pass ? string.Empty : $" (focused: {ReadFocusedText().Type}; reported by UI Automation: {DescribeReportedFocus()})")}");
                     stop |= stopOnFail && !pass;
                 }
                 else if (line.StartsWith("expecttitle:", StringComparison.Ordinal))
@@ -364,6 +364,27 @@ internal static class SelfTest
         catch (AggregateException)
         {
             return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// What UI Automation itself reports as focused (before a Chromium pane is looked into): its kind, class and framework,
+    /// never its name or text. Says why an expected box wasn't found, such as a browser bubble that has the focus.
+    /// </summary>
+    private static string DescribeReportedFocus()
+    {
+        try
+        {
+            var task = Task.Run(() =>
+            {
+                var current = AutomationElement.FocusedElement.Current;
+                return $"{current.ControlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal)} class '{current.ClassName}' framework '{current.FrameworkId}'";
+            });
+            return task.Wait(3000) ? task.Result : "(timeout)";
+        }
+        catch (AggregateException ex)
+        {
+            return $"({ex.InnerException?.GetType().Name})";
         }
     }
 

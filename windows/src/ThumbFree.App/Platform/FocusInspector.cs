@@ -116,7 +116,7 @@ internal static class FocusInspector
             }
         }
 
-        Log.Info("the focus stayed on a pane or a page in a Chromium window");
+        Log.Info($"the focus stayed on a pane or a page in a Chromium window ({ChromiumAccessibility.PageWindows(root).Count} page windows)");
         return Focused(root) ?? focused;
     }
 
