@@ -1,0 +1,65 @@
+# Dictation acceptance for ThumbFree.exe --self-test on lab.html (see run.ps1): every box on the page, in Tab order.
+# Stops at the first failed check, so nothing is ever typed into the wrong window.
+stoponfail
+wait 1000
+expecttitle: Dictation Lab
+expectfocus: Message
+field
+expectfield: multi-line
+clipboard
+ptt: Hello comma this is a test full stop
+expect: Hello, this is a test.
+# A space joins it to the text already in the box.
+ptt: Second sentence.
+expect: test. Second sentence.
+# Alt+Shift+Z types the last dictation again.
+again
+expect: Second sentence. Second sentence.
+# Live typing: each phrase is typed once the next one has started, the last when the dictation ends.
+live: We shipped the build. | Then we tested it. | It works.
+expect: Second sentence. We shipped the build. Then we tested it. It works.
+# A correction across pauses: nothing is typed until its new value has come.
+live: Meet me at the cafe at 6, | sorry, | 7 tonight.
+expect: It works. Meet me at the cafe at 7 tonight.
+# A list said in phrases waits, then goes on lines of its own.
+live: Things to do today: | order groceries, | go on a walk, | and call mom.
+expect: tonight.\nThings to do today:\n- Order groceries.\n- Go on a walk.\n- Call mom.
+clipboard
+# Recordings played as if spoken, through each English model: the last words survive a tap right after them.
+model en-kroko-live
+wav: ..\..\..\tests\audio\send-logs.wav
+expect: send me the latest build logs
+model en-parakeet-110m
+wav: ..\..\..\tests\audio\genres.wav
+expect: different genres
+# Subject: one line, so no list layout.
+keys: Tab
+expectfocus: Subject
+field
+expectfield: single-line
+ptt: Things to do today: order groceries, go on a walk, and call mom.
+expect: Things to do today: order groceries, go on a walk, and call mom.
+# Search: no full stop.
+keys: Tab
+expectfocus: Search
+field
+expectfield: search
+ptt: weather in Delhi tomorrow full stop
+expect: Weather in Delhi tomorrow
+expectnot: tomorrow.
+# An editable area that says it's multi-line (ARIA), not in an email app: an ordinary list still works.
+keys: Tab
+expectfocus: Email body
+field
+expectfield: multi-line
+live: Packing list: | passport, | charger, | and the blue jacket.
+expect: Packing list:\n- Passport.\n- Charger.\n- The blue jacket.
+# Password: refused, nothing typed.
+keys: Tab
+expectfocus: Password
+field
+expectfield: password
+ptt: secret words
+expectstatus: password field
+expectnot: secret words
+clipboard

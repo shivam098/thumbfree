@@ -1,16 +1,21 @@
 <#
 .SYNOPSIS
-    Runs the dictation acceptance script against a fresh Chrome window with a local test page.
+    Runs a dictation acceptance script against a fresh Chrome window with a local test page.
 .DESCRIPTION
-    Opens lab.html in a NEW Chrome window with a separate, temporary profile, runs dictation-lab.selftest.txt through
-    ThumbFree.exe --self-test (transcripts are scripted; no microphone), prints the results, and closes only that
-    test window. Run it while you're not using the PC: Windows won't let a background process bring the test window to
-    the front while you're typing elsewhere (the script then stops at the first failed check instead of typing).
+    Opens a test page (lab.html by default) in a NEW Chrome window with a separate, temporary profile, runs its script
+    through ThumbFree.exe --self-test (transcripts are scripted and recordings played; no microphone), prints the results,
+    and closes only that test window. Run it while you're not using the PC: Windows won't let a background process bring
+    the test window to the front while you're typing elsewhere (the script then stops at the first failed check instead
+    of typing).
 .EXAMPLE
     .\tests\DictationLab\run.ps1 -Exe .\src\ThumbFree.App\bin\Release\net10.0-windows\win-arm64\ThumbFree.exe
+.EXAMPLE
+    .\tests\DictationLab\run.ps1 -Exe ... -Page gmail-lab.html -Script gmail-lab.selftest.txt
 #>
 param(
     [Parameter(Mandatory)] [string] $Exe,
+    [string] $Page = 'lab.html',
+    [string] $Script = 'lab.selftest.txt',
     [string] $Chrome = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
 )
 
@@ -49,7 +54,7 @@ function Get-LabWindow([string] $profileMarker) {
     return [IntPtr]::Zero
 }
 $here = $PSScriptRoot
-$page = ([Uri](Join-Path $here 'lab.html')).AbsoluteUri
+$page = ([Uri](Join-Path $here $Page)).AbsoluteUri
 $profileDir = Join-Path $env:TEMP 'vd-dictlab-profile'
 
 # Start-Process joins arguments with spaces without quoting them, so quote paths (the profile may contain spaces).
@@ -60,8 +65,8 @@ try {
     if ($lab -eq [IntPtr]::Zero -or -not [LabWindow]::BringToFront($lab)) { throw 'The test window could not be brought to the front; nothing was run.' }
     $out = Join-Path $env:TEMP 'vd-dictlab.out.txt'
     Remove-Item $out -ErrorAction SilentlyContinue
-    $p = Start-Process $Exe -ArgumentList "--self-test `"$(Join-Path $here 'dictation-lab.selftest.txt')`" `"$out`"" -PassThru
-    if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id; throw 'self-test timed out' }
+    $p = Start-Process $Exe -ArgumentList "--self-test `"$(Join-Path $here $Script)`" `"$out`"" -PassThru
+    if (-not $p.WaitForExit(300000)) { Stop-Process -Id $p.Id; throw 'self-test timed out' }
     $lines = Get-Content $out
     $lines
     $pass = @($lines | Where-Object { $_ -match '^\s+PASS' }).Count

@@ -1,0 +1,16 @@
+# Dictation acceptance for ThumbFree.exe --self-test on gmail-lab.html (see run.ps1): a webmail compose page, where a
+# greeting or a sign-off alone is enough for email layout. Stops at the first failed check.
+stoponfail
+wait 1000
+expecttitle: Gmail
+expectfocus: Message
+keys: Tab
+keys: Tab
+keys: Tab
+expectfocus: Email body
+field
+expectfield: multi-line email
+# The email is held while you speak (a greeting came first) and laid out at the end.
+live: Hey Tim, | would love to connect. | Are you available on Friday at 3 PM... actually 4 PM? | Thanks, Ben.
+expect: Hey Tim,\n\nWould love to connect. Are you available on Friday at 4 PM?\n\nThanks,\nBen
+clipboard

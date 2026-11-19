@@ -42,7 +42,8 @@ internal static class SelfTest
         var output = new StringBuilder();
         var temp = Path.Combine(Path.GetTempPath(), "thumbfree-selftest-" + Environment.ProcessId);
         Directory.CreateDirectory(temp);
-        var settings = AppSettings.LoadOrCreate();
+        // Default settings, so results don't depend on this PC's (they're never written: the store saves to the temp folder).
+        var settings = new AppSettings();
         var store = new SettingsStore(settings, Path.Combine(temp, "settings.json"));
         var models = new ModelStore(AppPaths.ModelsDir, AppPaths.SharedModelsDirs);
         var services = new AppServices
