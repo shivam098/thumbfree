@@ -102,6 +102,7 @@ class CoreTest {
     @Test
     fun dictation_joins_the_text_already_there() {
         assertEquals(" and then", Insertion.withSpacing("We shipped it", "and then"))
+        assertEquals(" and then", Insertion.withSpacing("We shipped it", " and then"))
         assertEquals("Hello", Insertion.withSpacing("", "Hello"))
         assertEquals("Hello", Insertion.withSpacing("Hi ", "Hello"))
         assertEquals(", right?", Insertion.withSpacing("ok", ", right?"))
@@ -110,6 +111,8 @@ class CoreTest {
         assertFalse(Insertion.continuesSentence("We shipped it. "))
         assertFalse(Insertion.continuesSentence(""))
         assertFalse(Insertion.continuesSentence("Dear John,\n"))
+        assertFalse(Insertion.continuesSentence("Dear John,\r"))
+        assertFalse(Insertion.continuesSentence("Dear John,\u2028"))
         assertEquals("a b", Insertion.forField("a\nb", FieldInfo(false, false, false, false)))
         assertEquals("a\nb", Insertion.forField("a\nb", FieldInfo(false, false, true, false)))
     }
@@ -172,6 +175,14 @@ class CoreTest {
         assertEquals("Are you free?", LiveText.endSentence("Are you free?"))
         assertEquals("Meet at 4 pm.", LiveText.endSentence("Meet at 4 pm"))
         assertEquals("", LiveText.endSentence(""))
+
+        // The recognizer's own marks stay where the model adds none; the model's win; never two in a row.
+        assertEquals("So I wanted to check. Then push the build.", LiveText.mergePunctuation("so I wanted to check. then push the build.", "So I wanted to check then push the build."))
+        assertEquals("Build, logs.", LiveText.mergePunctuation("build. logs", "build, logs."))
+        assertEquals("Please send me the latest build, logs.", LiveText.mergePunctuation("Please send me the latest build logs.", "Please send me the latest build, logs.,"))
+        assertEquals("Push the build.", LiveText.mergePunctuation("push the build.", "Push the Build.."))
+        assertEquals("Ready? Go!", LiveText.mergePunctuation("ready go", "Ready?. Go!!"))
+        assertEquals("We shipped it, today", LiveText.mergePunctuation("we shipped it, today", "We shipped it,. today"))
     }
 
     @Test

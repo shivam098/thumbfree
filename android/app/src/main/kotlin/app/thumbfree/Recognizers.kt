@@ -159,8 +159,20 @@ class StreamingRecognizer private constructor(
         /** Flushes the last words and returns the whole text; the session can't be used afterwards. */
         fun finish(): String = synchronized(lock) {
             if (!closed && !done) {
-                // A little silence lets the model emit the last word before the stream ends.
-                stream.acceptWaveform(FloatArray(SpeechAudio.SAMPLE_RATE * 3 / 10), SpeechAudio.SAMPLE_RATE)
+                // sherpa-onnx decodes only whole windows (Kroko: 1.41 s, moving on 1.28 s at a time), so the last words
+                // wait for audio after them. Silence goes in 100 ms at a time until two windows past the end are decoded
+                // (at least 1 s, at most 3 s). A fixed 0.3 s lost the last words almost always, and 1 s a third of the time.
+                val silence = FloatArray(SpeechAudio.SAMPLE_RATE / 10)
+                var decodes = 0
+                var tail = 0
+                while ((decodes < 2 || tail < SpeechAudio.SAMPLE_RATE) && tail < SpeechAudio.SAMPLE_RATE * 3) {
+                    stream.acceptWaveform(silence, SpeechAudio.SAMPLE_RATE)
+                    while (recognizer.isReady(stream)) {
+                        recognizer.decode(stream)
+                        decodes++
+                    }
+                    tail += silence.size
+                }
                 stream.inputFinished()
                 while (recognizer.isReady(stream)) recognizer.decode(stream)
                 val last = recognizer.getResult(stream).text.trim()
@@ -182,8 +194,24 @@ class StreamingRecognizer private constructor(
     /** Speech thread: a new dictation. */
     fun session() = Session()
 
-    private fun punctuate(text: String): String =
-        punctuation?.let { runCatching { LiveText.mergePunctuation(text, it.addPunctuation(text)) }.getOrNull() } ?: text
+    /**
+     * Punctuation from the small model, merged into the recognizer's words and capitals. Kroko writes a few marks itself
+     * ("is it ready?", "push the build."). The model gets the bare words: given Kroko's marks it repeats them, sometimes
+     * twice ("build.."), and adds stray commas ("build, logs."). Kroko's own mark then goes back wherever it wrote one,
+     * since the model hardly ever ends a phrase with a mark (a question would lose its "?"), and each word keeps one mark
+     * ([LiveText.mergePunctuation]). The phrase stays as recognized if anything goes wrong.
+     */
+    internal fun punctuate(text: String): String {
+        val model = punctuation ?: return text
+        return runCatching {
+            val words = text.split(' ').filter { it.isNotEmpty() }
+            val bare = words.map { it.trimEnd(*MARKS) }
+            val out = if (bare.all { it.isNotEmpty() }) model.addPunctuation(bare.joinToString(" ")).split(' ').filter { it.isNotEmpty() } else emptyList()
+            if (out.size != words.size) return text
+            val marked = out.mapIndexed { i, w -> if (words[i].length > bare[i].length) w.trimEnd(*MARKS) + words[i][bare[i].length] else w }
+            LiveText.mergePunctuation(text, marked.joinToString(" "))
+        }.getOrDefault(text)
+    }
 
     /** The whole recording at once (tests, and the fallback when no live session ran). */
     override fun transcribe(samples: FloatArray, preview: Boolean, prompt: String?): String? {
@@ -222,6 +250,9 @@ class StreamingRecognizer private constructor(
     }
 
     companion object {
+        /** The marks the punctuation model writes (and Kroko, sometimes). */
+        private val MARKS = charArrayOf('.', ',', '?', '!', ';', ':')
+
         /** Loads the Kroko streaming model (and the punctuation model when present) from [dir]. */
         fun load(dir: File, threads: Int): StreamingRecognizer {
             val names = listOf("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt")

@@ -48,6 +48,14 @@ public class SharedCoreTests
         Assert.Equal("Are you free?", LiveText.EndSentence("Are you free?"));
         Assert.Equal("Meet at 4 pm.", LiveText.EndSentence("Meet at 4 pm"));
         Assert.Equal("", LiveText.EndSentence(""));
+
+        // The recognizer's own marks stay where the model adds none; the model's win; never two in a row.
+        Assert.Equal("So I wanted to check. Then push the build.", LiveText.MergePunctuation("so I wanted to check. then push the build.", "So I wanted to check then push the build."));
+        Assert.Equal("Build, logs.", LiveText.MergePunctuation("build. logs", "build, logs."));
+        Assert.Equal("Please send me the latest build, logs.", LiveText.MergePunctuation("Please send me the latest build logs.", "Please send me the latest build, logs.,"));
+        Assert.Equal("Push the build.", LiveText.MergePunctuation("push the build.", "Push the Build.."));
+        Assert.Equal("Ready? Go!", LiveText.MergePunctuation("ready go", "Ready?. Go!!"));
+        Assert.Equal("We shipped it, today", LiveText.MergePunctuation("we shipped it, today", "We shipped it,. today"));
     }
 
     [Fact]

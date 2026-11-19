@@ -35,6 +35,17 @@ class LayoutTest {
             if (letters >= 8 && w.none { it.isUpperCase() }) kotlin.test.assertTrue(w in jargon, "$role: \"$w\" could rewrite ordinary words")
         }
     }
+
+    /** The keyboard and the bubble type a laid-out list on a new line; a corrected time with a spoken "new line" isn't a list. */
+    @Test
+    fun only_a_laid_out_list_or_email_starts_on_a_new_line() {
+        assertEquals("\nMy plan:\n1. Book the flights.\n2. Find a hotel.\n3. Pack the bags.",
+            Layout.shape("My plan: first, book the flights, second, find a hotel, and third, pack the bags.", "Notes.", multiLine = true, email = false))
+        assertEquals("Meet at 4 pm.\nBring the slides.",
+            Layout.shape("Meet at 3 pm, actually 4 pm.\nBring the slides.", "Notes.", multiLine = true, email = false))
+        assertEquals("Meet at 4 pm.\nBring the slides.",
+            Layout.shape("Meet at 3 pm, actually 4 pm.\nBring the slides.", "Notes.\n", multiLine = true, email = false))
+    }
 }
 
 /** Shared by the JVM test and the on-device test. */

@@ -9,10 +9,11 @@ namespace ThumbFree.Core;
 public static partial class LiveText
 {
     /// <summary>
-    /// Takes only the punctuation from <paramref name="punctuated"/> (the punctuation model's output) and keeps the
+    /// Takes the punctuation from <paramref name="punctuated"/> (the punctuation model's output) and keeps the
     /// recognizer's own words and capitals (<paramref name="original"/>); the model re-cases words badly ("YOUTUBE").
-    /// Sentence starts are capitalized. If the two don't have the same words, <paramref name="original"/> is returned
-    /// unchanged.
+    /// Where the model puts no mark, a mark the recognizer wrote itself is kept. A word never ends in two marks: the
+    /// model sometimes adds one after the mark it was given ("build.." or "logs.,"), so the first is kept. Sentence
+    /// starts are capitalized. If the two don't have the same words, <paramref name="original"/> is returned unchanged.
     /// </summary>
     public static string MergePunctuation(string original, string punctuated)
     {
@@ -34,6 +35,7 @@ public static partial class LiveText
             }
 
             var mark = TrailingMarkRegex().Match(marked[i]).Value;
+            mark = mark.Length > 0 ? mark[..1] : TrailingMarkRegex().Match(words[i]).Value is { Length: > 0 } own ? own[..1] : string.Empty;
             var word = sentenceStart && bare.Length > 0 && char.IsLower(bare[0]) ? char.ToUpperInvariant(bare[0]) + bare[1..] : bare;
             if (sb.Length > 0)
             {

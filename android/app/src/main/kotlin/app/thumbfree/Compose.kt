@@ -4,7 +4,6 @@ import app.thumbfree.core.DictationFormatter
 import app.thumbfree.core.FieldInfo
 import app.thumbfree.core.Insertion
 import app.thumbfree.core.Layout
-import app.thumbfree.core.LayoutContext
 
 /** Turns a raw transcript into the text to type into a field: clean-up, dictionary, then email/list layout. */
 object Compose {
@@ -24,16 +23,7 @@ object Compose {
     fun text(prefs: Prefs, raw: String, before: CharSequence?, field: FieldInfo, email: Boolean): String {
         var text = DictationFormatter(prefs.dictationOptions()).format(raw, Insertion.continuesSentence(before), field.search)
         if (text.isEmpty()) return ""
-        if (prefs.smartFormatting && !field.search) {
-            val atStart = before.isNullOrBlank()
-            val laid = Layout.apply(text, LayoutContext(field.multiLine, atStart, email))
-            // A list or an email laid out by Layout starts on its own line (a spoken "new line" doesn't move the start).
-            if (field.multiLine && laid != text && laid.contains('\n') && !atStart && before?.lastOrNull() != '\n') {
-                text = "\n" + laid
-            } else {
-                text = laid
-            }
-        }
+        if (prefs.smartFormatting && !field.search) text = Layout.shape(text, before, field.multiLine, email)
         return Insertion.forField(text, field)
     }
 
