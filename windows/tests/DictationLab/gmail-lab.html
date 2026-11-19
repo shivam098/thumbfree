@@ -31,6 +31,9 @@
   document.addEventListener('focusin', e => { if (e.target instanceof HTMLElement && e.target !== document.body) last = e.target; });
   window.addEventListener('load', () => last.focus());
   window.addEventListener('focus', () => last.focus());
+  // The runner clicks a blank part of the page once the window is in front, so that Chrome itself has the focus (a window
+  // brought forward by another program can have none): a click on blank space puts the cursor back in the last box.
+  document.addEventListener('mousedown', e => { if (e.target === document.body || e.target === document.documentElement) { e.preventDefault(); last.focus(); } });
 </script>
 </body>
 </html>
