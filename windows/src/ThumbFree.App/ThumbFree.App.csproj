@@ -29,6 +29,11 @@
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\logo-64.png" />
+    <Resource Include="Assets\logo-256.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ThumbFree.App.Tests" />
   </ItemGroup>
 
   <ItemGroup>

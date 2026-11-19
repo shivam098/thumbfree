@@ -36,6 +36,9 @@ jobs:
       - name: Speech tests (downloads against a local server; engine tests skip without models)
         run: dotnet test tests/ThumbFree.Speech.Tests -c Release
 
+      - name: App tests (settings, History, samples, pages drawn offscreen)
+        run: dotnet test tests/ThumbFree.App.Tests -c Release
+
       - name: Build app (x64)
         run: dotnet build src/ThumbFree.App -c Release -r win-x64
 

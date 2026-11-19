@@ -1,86 +1,93 @@
 <#
 .SYNOPSIS
-    Regenerates the ThumbFree logo: assets/logo.png, app icon (.ico) and overlay PNG.
-    Run with Windows PowerShell (uses System.Drawing):  powershell -File assets\make-logo.ps1
+    Regenerates ThumbFree's Windows logo and app icon from the Android launcher icon, so every platform shows the same
+    mark: the white microphone of android/app/src/main/res/drawable/ic_launcher_foreground.xml on the launcher colour
+    (tf_launcher_bg in android/app/src/main/res/values/colors.xml), drawn on a rounded tile.
+
+    Writes assets\logo.png (512 px, README) and, in src\ThumbFree.App\Assets: app.ico (16 to 256 px: exe, tray and
+    windows), logo-64.png (status pill, sidebar) and logo-256.png (first-run guide).
+
+    Run with Windows PowerShell (it draws with WPF):  powershell -File assets\make-logo.ps1
 #>
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase
 
-$root = Split-Path -Parent $PSScriptRoot
-$appAssets = Join-Path $root 'src\ThumbFree.App\Assets'
+$windows = Split-Path -Parent $PSScriptRoot
+$repo = Split-Path -Parent $windows
+$res = Join-Path $repo 'android\app\src\main\res'
+$appAssets = Join-Path $windows 'src\ThumbFree.App\Assets'
 New-Item -ItemType Directory -Force $appAssets | Out-Null
 
-function New-RoundedPath([float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
-    $p = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $d = $r * 2
-    $p.AddArc($x, $y, $d, $d, 180, 90)
-    $p.AddArc($x + $w - $d, $y, $d, $d, 270, 90)
-    $p.AddArc($x + $w - $d, $y + $h - $d, $d, $d, 0, 90)
-    $p.AddArc($x, $y + $h - $d, $d, $d, 90, 90)
-    $p.CloseFigure()
-    return $p
-}
+# The Android drawable: a 24-unit Material microphone, placed by its group's scale and offset in a 108-unit viewport.
+$android = 'http://schemas.android.com/apk/res/android'
+[xml]$vector = Get-Content -Raw (Join-Path $res 'drawable\ic_launcher_foreground.xml')
+[xml]$colors = Get-Content -Raw (Join-Path $res 'values\colors.xml')
+$viewport = [double]$vector.vector.GetAttribute('viewportWidth', $android)
+$group = $vector.vector.group
+$groupScale = [double]$group.GetAttribute('scaleX', $android)
+$groupX = [double]$group.GetAttribute('translateX', $android)
+$groupY = [double]$group.GetAttribute('translateY', $android)
+$pathData = $group.path.GetAttribute('pathData', $android)
+$glyphColour = [System.Windows.Media.ColorConverter]::ConvertFromString($group.path.GetAttribute('fillColor', $android))
+$tileHex = ($colors.resources.color | Where-Object { $_.name -eq 'tf_launcher_bg' }).'#text'
+$tileColour = [System.Windows.Media.ColorConverter]::ConvertFromString($tileHex)
+
+# An adaptive icon shows the middle 72 of its 108 units (the rest is room for the launcher's mask and effects).
+$visible = 72.0
+$visibleStart = ($viewport - $visible) / 2
 
 function New-Logo([int]$size) {
-    $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = 'AntiAlias'
-    $g.PixelOffsetMode = 'HighQuality'
-    $g.Clear([System.Drawing.Color]::Transparent)
     $s = $size / 256.0
+    $inset = if ($size -le 24) { 0.0 } else { 6 * $s }
+    $tile = $size - 2 * $inset
+    $radius = $tile * 0.22
 
-    # Tile: teal -> emerald diagonal gradient (Voice Assistant uses indigo -> violet).
-    $tile = New-RoundedPath (6 * $s) (6 * $s) (244 * $s) (244 * $s) (56 * $s)
-    $grad = New-Object System.Drawing.Drawing2D.LinearGradientBrush (New-Object System.Drawing.PointF 0, 0), (New-Object System.Drawing.PointF $size, $size), ([System.Drawing.Color]::FromArgb(255, 13, 148, 136)), ([System.Drawing.Color]::FromArgb(255, 16, 185, 129))
-    $g.FillPath($grad, $tile)
+    # Small icons get a bigger microphone, so its stand stays at least a pixel wide.
+    $boost = if ($size -le 24) { 1.32 } elseif ($size -le 48) { 1.14 } else { 1.0 }
+    $unit = $tile / $visible * $boost
+    $centre = $viewport / 2
 
-    $white = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
-    $stroke = [Math]::Max(1.5, 14 * $s)
-    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), $stroke
-    $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
+    $geometry = [System.Windows.Media.Geometry]::Parse($pathData).Clone()
+    $transform = New-Object System.Windows.Media.TransformGroup
+    $transform.Children.Add((New-Object System.Windows.Media.ScaleTransform $groupScale, $groupScale))
+    $transform.Children.Add((New-Object System.Windows.Media.TranslateTransform ($groupX - $centre), ($groupY - $centre)))
+    $transform.Children.Add((New-Object System.Windows.Media.ScaleTransform $unit, $unit))
+    $transform.Children.Add((New-Object System.Windows.Media.TranslateTransform ($size / 2), ($size / 2)))
+    $geometry.Transform = $transform
 
-    # Microphone capsule.
-    $capsule = New-RoundedPath (100 * $s) (48 * $s) (56 * $s) (104 * $s) (28 * $s)
-    $g.FillPath($white, $capsule)
-    # Stand arc, stem, base.
-    $g.DrawArc($pen, 76 * $s, 92 * $s, 104 * $s, 88 * $s, 0, 180)
-    $g.DrawLine($pen, 128 * $s, 180 * $s, 128 * $s, 204 * $s)
-    $g.DrawLine($pen, 100 * $s, 206 * $s, 156 * $s, 206 * $s)
+    $visual = New-Object System.Windows.Media.DrawingVisual
+    $dc = $visual.RenderOpen()
+    $tileBrush = New-Object System.Windows.Media.SolidColorBrush $tileColour
+    $dc.DrawRoundedRectangle($tileBrush, $null, (New-Object System.Windows.Rect $inset, $inset, $tile, $tile), $radius, $radius)
+    $dc.DrawGeometry((New-Object System.Windows.Media.SolidColorBrush $glyphColour), $null, $geometry)
+    $dc.Close()
 
-    if ($size -ge 32) {
-        # Sound waves on both sides.
-        $wave = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(230, 255, 255, 255)), ([Math]::Max(1.5, 10 * $s))
-        $wave.StartCap = 'Round'; $wave.EndCap = 'Round'
-        $g.DrawArc($wave, 34 * $s, 66 * $s, 60 * $s, 92 * $s, 120, 120)
-        $g.DrawArc($wave, 162 * $s, 66 * $s, 60 * $s, 92 * $s, -60, 120)
-        $wave.Dispose()
-    }
-
-    $pen.Dispose(); $white.Dispose(); $grad.Dispose(); $g.Dispose()
-    return $bmp
+    $bitmap = New-Object System.Windows.Media.Imaging.RenderTargetBitmap $size, $size, 96, 96, ([System.Windows.Media.PixelFormats]::Pbgra32)
+    $bitmap.Render($visual)
+    return $bitmap
 }
 
-function Get-PngBytes($bmp) {
-    $ms = New-Object System.IO.MemoryStream
-    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+function Get-PngBytes($bitmap) {
+    $encoder = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+    $encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+    $stream = New-Object System.IO.MemoryStream
+    $encoder.Save($stream)
     # The leading comma stops PowerShell from unrolling the byte array into the pipeline.
-    return , $ms.ToArray()
+    return , $stream.ToArray()
 }
 
-# README / marketing logo.
-$big = New-Logo 512
-$big.Save((Join-Path $PSScriptRoot 'logo.png'), [System.Drawing.Imaging.ImageFormat]::Png)
-$big.Dispose()
+function Save-Png([int]$size, [string]$path) {
+    [System.IO.File]::WriteAllBytes($path, (Get-PngBytes (New-Logo $size)))
+}
 
-# Overlay pill logo.
-$small = New-Logo 64
-$small.Save((Join-Path $appAssets 'logo-64.png'), [System.Drawing.Imaging.ImageFormat]::Png)
-$small.Dispose()
+Save-Png 512 (Join-Path $PSScriptRoot 'logo.png')
+Save-Png 64 (Join-Path $appAssets 'logo-64.png')
+Save-Png 256 (Join-Path $appAssets 'logo-256.png')
 
-# Multi-resolution .ico with PNG-compressed entries.
+# Multi-resolution .ico with PNG-compressed entries (Windows Vista and later).
 $sizes = 16, 20, 24, 32, 40, 48, 64, 128, 256
 $images = New-Object System.Collections.Generic.List[byte[]]
-foreach ($size in $sizes) { $b = New-Logo $size; $images.Add((Get-PngBytes $b)); $b.Dispose() }
+foreach ($size in $sizes) { $images.Add((Get-PngBytes (New-Logo $size))) }
 $ico = New-Object System.IO.MemoryStream
 $w = New-Object System.IO.BinaryWriter $ico
 $w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$sizes.Count)
@@ -95,4 +102,4 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($img in $images) { $w.Write($img) }
 $w.Flush()
 [System.IO.File]::WriteAllBytes((Join-Path $appAssets 'app.ico'), $ico.ToArray())
-Write-Host "Logo written to assets\logo.png and $appAssets"
+Write-Host "Logo written to assets\logo.png and $appAssets (tile $tileHex)"
