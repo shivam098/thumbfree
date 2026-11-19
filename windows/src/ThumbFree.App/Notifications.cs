@@ -28,6 +28,9 @@ internal sealed class Notifier
     private readonly SynchronizationContext? _context;
     private object? _shown;
 
+    /// <summary>The microphone warning was left up because taking it back would also take the kept dictation's notification.</summary>
+    private bool _warningLeft;
+
     /// <param name="copy">Puts text on the clipboard (on the UI thread).</param>
     public Notifier(INotificationSurface surface, DictationState state, Action<string> copy)
     {
@@ -35,9 +38,11 @@ internal sealed class Notifier
         _state = state;
         _copy = copy;
         _context = SynchronizationContext.Current;
+
+        // Windows reports only the notification shown last, so while a dictation is kept, a click on any of them copies it.
         surface.Clicked += tag =>
         {
-            if (ReferenceEquals(tag, UntypedTag))
+            if (ReferenceEquals(tag, UntypedTag) || UntypedText is not null)
             {
                 CopyUntyped();
             }
@@ -64,11 +69,16 @@ internal sealed class Notifier
         if (!_state.MicrophoneSilent)
         {
             _state.SetMicrophoneSilent(true);
+            _warningLeft = false;
             Show("ThumbFree can't hear you", "No sound from the microphone. Is another app or a call using it?", warning: true, SilentTag);
         }
     });
 
-    /// <summary>Sound came back (or the dictation ended): the warning goes, from the screen and the notification centre.</summary>
+    /// <summary>
+    /// Sound came back (or the dictation ended): the warning goes, from the screen and the notification centre. While a
+    /// dictation is kept it stays (Windows can only take back all of ThumbFree's notifications at once) and goes when
+    /// the dictation is copied.
+    /// </summary>
     public void ClearMicrophoneSilent() => Post(() =>
     {
         if (!_state.MicrophoneSilent)
@@ -77,7 +87,11 @@ internal sealed class Notifier
         }
 
         _state.SetMicrophoneSilent(false);
-        if (ReferenceEquals(_shown, SilentTag))
+        if (UntypedText is not null)
+        {
+            _warningLeft = true;
+        }
+        else if (ReferenceEquals(_shown, SilentTag))
         {
             _surface.Hide();
             _shown = null;
@@ -102,6 +116,12 @@ internal sealed class Notifier
 
         _copy(text);
         UntypedText = null;
+        if (_warningLeft && !_state.MicrophoneSilent)
+        {
+            _surface.Hide();
+        }
+
+        _warningLeft = false;
         Show("Copied", "Paste your dictation with Ctrl+V.", warning: false, null);
         return true;
     }

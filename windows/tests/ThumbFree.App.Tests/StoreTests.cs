@@ -342,6 +342,54 @@ public sealed class NotifierTests
     }
 
     [Fact]
+    public void Clearing_the_warning_after_kept_text_never_takes_the_kept_text_back()
+    {
+        var notifier = new Notifier(_surface, _state, _copied.Add);
+
+        notifier.ShowUntyped("Call me at 4 PM.");
+        notifier.ShowMicrophoneSilent();
+        notifier.ClearMicrophoneSilent();
+
+        Assert.Equal(0, _surface.Hidden);
+        Assert.False(_state.MicrophoneSilent);
+        Assert.Equal("Call me at 4 PM.", notifier.UntypedText);
+
+        // Windows reports the warning (shown last) even when the kept text's notification is clicked: it still copies.
+        _surface.Click();
+        Assert.Equal(new[] { "Call me at 4 PM." }, _copied);
+        Assert.Equal(1, _surface.Hidden);
+        Assert.Equal("Copied", _surface.Shown[^1].Title);
+    }
+
+    [Fact]
+    public void Copying_kept_text_never_takes_back_a_warning_that_is_still_true()
+    {
+        var notifier = new Notifier(_surface, _state, _copied.Add);
+
+        notifier.ShowUntyped("Call me at 4 PM.");
+        notifier.ShowMicrophoneSilent();
+        notifier.ClearMicrophoneSilent();
+        notifier.ShowMicrophoneSilent();
+
+        Assert.True(notifier.CopyUntyped());
+        Assert.Equal(0, _surface.Hidden);
+        Assert.True(_state.MicrophoneSilent);
+    }
+
+    [Fact]
+    public void Once_the_kept_text_is_copied_clearing_takes_the_warning_back()
+    {
+        var notifier = new Notifier(_surface, _state, _copied.Add);
+
+        notifier.ShowUntyped("Call me at 4 PM.");
+        notifier.CopyUntyped();
+        notifier.ShowMicrophoneSilent();
+        notifier.ClearMicrophoneSilent();
+
+        Assert.Equal(1, _surface.Hidden);
+    }
+
+    [Fact]
     public void Clearing_the_warning_never_takes_back_kept_text()
     {
         var notifier = new Notifier(_surface, _state, _copied.Add);
