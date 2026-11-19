@@ -139,4 +139,78 @@ public class SharedCoreTests
             }
         }
     }
+
+    [Fact]
+    public void Dictation_joins_the_text_already_there()
+    {
+        Assert.Equal(" and then", Insertion.WithSpacing("We shipped it", "and then"));
+        Assert.Equal("Hello", Insertion.WithSpacing("", "Hello"));
+        Assert.Equal("Hello", Insertion.WithSpacing(null, "Hello"));
+        Assert.Equal("Hello", Insertion.WithSpacing("Hi ", "Hello"));
+        Assert.Equal(", right?", Insertion.WithSpacing("ok", ", right?"));
+        Assert.Equal("mail", Insertion.WithSpacing("@", "mail"));
+
+        // Text that already starts with whitespace (a line break turned into a space) gets no second one.
+        Assert.Equal(" Hello", Insertion.WithSpacing("Hi", " Hello"));
+        Assert.True(Insertion.ContinuesSentence("We shipped it"));
+        Assert.False(Insertion.ContinuesSentence("We shipped it. "));
+        Assert.False(Insertion.ContinuesSentence(""));
+        Assert.False(Insertion.ContinuesSentence(null));
+        Assert.False(Insertion.ContinuesSentence("Dear John,\n"));
+
+        // However the app reports a line end.
+        foreach (var lineEnd in new[] { "\r\n", "\r", "\v", "\u2028", "\u2029" })
+        {
+            Assert.False(Insertion.ContinuesSentence("Dear John," + lineEnd));
+        }
+
+        Assert.Equal("a\nb\nc\nd\ne\nf\n", Insertion.NormalizeLineEnds("a\r\nb\rc\vd\u2028e\u2029f\n"));
+        Assert.Null(Insertion.NormalizeLineEnds(null));
+        Assert.Equal("a b", Insertion.ForField("a\nb", new FieldInfo(false, false, false, false)));
+        Assert.Equal("a\nb", Insertion.ForField("a\nb", new FieldInfo(false, false, true, false)));
+    }
+
+    [Fact]
+    public void Personal_dictionary_lines_become_replacements()
+    {
+        var map = PersonalDictionary.Parse("git hub = GitHub\n\nno equals sign\n = empty heard\nsig = Thanks,\\nShivam\n");
+        Assert.Equal(new Dictionary<string, string> { ["git hub"] = "GitHub", ["sig"] = "Thanks,\nShivam" }, map);
+        var formatter = new DictationFormatter(new DictationOptions { Replacements = map });
+        Assert.Equal("Push to GitHub.", formatter.Format("push to git hub."));
+    }
+
+    [Fact]
+    public void Short_known_hallucinations_are_dropped()
+    {
+        Assert.True(Hallucinations.IsLikely("Thanks for watching!", Decoding.SampleRate));
+        Assert.False(Hallucinations.IsLikely("Thanks for watching!", 4 * Decoding.SampleRate));
+        Assert.False(Hallucinations.IsLikely("Send it", Decoding.SampleRate));
+    }
+
+    /// <summary>
+    /// Android reads these from the field's input type; Windows from UI Automation (in the app). Either way the core
+    /// applies the same rules to them.
+    /// </summary>
+    [Fact]
+    public void Password_and_search_fields_are_recognised()
+    {
+        var formatter = new DictationFormatter();
+        LiveTyping Typing(FieldInfo field) => new(formatter, new LiveTypingContext("", field, Live: true, SmartFormatting: true));
+
+        var password = Typing(new FieldInfo(Password: true));
+        var step = password.Update(["my secret is", "open sesame"], "and more");
+        Assert.Equal(string.Empty, step.Type);
+        Assert.Equal(string.Empty, step.Pending);
+        Assert.True(password.HoldsAll);
+        Assert.Equal(string.Empty, password.Finish(["my secret is", "open sesame"]));
+        Assert.Equal(string.Empty, password.FinalText);
+
+        // Search boxes: no full stop and no smart formatting.
+        Assert.Equal("Weather in Delhi", Typing(new FieldInfo(Search: true)).Finish(["weather in Delhi."]));
+        Assert.Equal("Flights at 3 pm actually 4 pm", Typing(new FieldInfo(Search: true)).Finish(["flights at 3 pm actually 4 pm."]));
+        Assert.Equal("Flights at 4 pm.", Typing(new FieldInfo()).Finish(["flights at 3 pm actually 4 pm."]));
+
+        Assert.Equal("Dear team The build is green.", Typing(new FieldInfo()).Finish(["dear team new line the build is green."]));
+        Assert.Equal("Dear team\nThe build is green.", Typing(new FieldInfo(MultiLine: true)).Finish(["dear team new line the build is green."]));
+    }
 }
