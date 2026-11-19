@@ -3,7 +3,7 @@
 Everything needed to publish the Android app, in order. Text in boxes is ready to paste into the Play Console.
 
 **What gets uploaded:** the **bubble edition** as an app bundle, `ThumbFree-x.y.z-google-play.aab`, attached to every
-[GitHub release](https://github.com/shivam098/thumbfree/releases). Play Protect's sideloading block doesn't apply to
+[GitHub release](https://github.com/shivam098/thumbfree-android/releases). Play Protect's sideloading block doesn't apply to
 apps installed from Play, so Play users get the bubble.
 
 ## 0. Already done in the app (v0.7.0)
@@ -16,7 +16,7 @@ and History stays on the phone, so the Data safety answer below is unchanged.
 - 64-bit native code with 16 KB pages; minimum Android 8.0.
 - A prominent disclosure before the accessibility settings screen (first-run guide, bubble step).
 - [Privacy policy](privacy.md):
-  `https://github.com/shivam098/thumbfree/blob/main/docs/privacy.md`
+  `https://github.com/shivam098/thumbfree-android/blob/main/docs/privacy.md`
 
 ## 1. Create the developer account (you)
 
@@ -84,7 +84,7 @@ PRIVATE BY DESIGN
 • The internet is used only to download the speech model once
 • Sharing recordings to help improve ThumbFree is optional and off by default, and nothing is ever sent without you choosing to
 
-Open source: github.com/shivam098/thumbfree
+Open source: github.com/shivam098/thumbfree-android
 ```
 
 **Graphics** (in `store/google-play/` in the repo):
@@ -105,13 +105,13 @@ Screenshots to take on the Pixel, in this order:
 6. The first guide screen ("No internet needed").
 
 **Category:** Productivity. **Tags:** Productivity, Tools. **Contact email:** as in step 1. **Website:**
-`https://github.com/shivam098/thumbfree`.
+`https://github.com/shivam098/thumbfree-android`.
 
 ## 4. App content (Policy → App content)
 
 | Section | Answer |
 |---|---|
-| Privacy policy | `https://github.com/shivam098/thumbfree/blob/main/docs/privacy.md` |
+| Privacy policy | `https://github.com/shivam098/thumbfree-android/blob/main/docs/privacy.md` |
 | Ads | No, the app doesn't contain ads |
 | App access | All functionality is available without special access (no login) |
 | Content rating | Questionnaire, category **Utility, Productivity, Communication, or Other**. Answer **No** to everything (violence, sexual content, language, controlled substances, gambling, user interaction or sharing between users, location sharing, digital purchases). Expected rating: Everyone / 3+. |

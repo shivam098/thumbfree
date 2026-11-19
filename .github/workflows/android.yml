@@ -1,12 +1,9 @@
 name: Android
 
-# Windows-only changes don't need the Android build and emulator run.
 on:
   push:
     branches: [main]
-    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml"]
   pull_request:
-    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -94,12 +91,12 @@ jobs:
           mkdir -p models/parakeet-tdt-110m models/kroko-en-live
           get() { [ -f "$2" ] || curl -fsSL --retry 5 -o "$2" "$1"; echo "$3  $2" | sha256sum -c -; }
           get https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin models/ggml-base.en-q8_0.bin a4d4a0768075e13cfd7e19df3ae2dbc4a68d37d36a7dad45e8410c9a34f8c87e
-          p=https://github.com/shivam098/thumbfree/releases/download/models-parakeet-110m-1
+          p=https://github.com/shivam098/thumbfree-android/releases/download/models-parakeet-110m-1
           get $p/encoder.int8.onnx models/parakeet-tdt-110m/encoder.int8.onnx 0f35509ddeb9b39002fb077d979a9fe74f06eb0bc4dd5c34f512f82e5111d657
           get $p/decoder.int8.onnx models/parakeet-tdt-110m/decoder.int8.onnx f7c331c5504c2e593c76ed22b728e3f554af6c4a383dde862e719ced08b1da19
           get $p/joiner.int8.onnx models/parakeet-tdt-110m/joiner.int8.onnx bf7dff69e9f2cdbe9943d70da358f38b361c115ba0105bae7e908e0d6ec782f6
           get $p/tokens.txt models/parakeet-tdt-110m/tokens.txt 450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10
-          k=https://github.com/shivam098/thumbfree/releases/download/models-kroko-en-live-1
+          k=https://github.com/shivam098/thumbfree-android/releases/download/models-kroko-en-live-1
           get $k/encoder.onnx models/kroko-en-live/encoder.onnx d4881c57449d581e0770fd53fa66c2fdc6cd167d92ece7c715e603defc96d9d4
           get $k/decoder.onnx models/kroko-en-live/decoder.onnx 455ba38466fce8d5a57e7db68a323b684079ca4d9e1dd93a740d9b2429aae3b1
           get $k/joiner.onnx models/kroko-en-live/joiner.onnx d406f616736350e2a7df3e39398b78eb2fc1a2ca6973a19d3853fa3227e25b52

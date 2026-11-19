@@ -250,7 +250,7 @@ class SetupActivity : Activity() {
                 13f, muted = true,
             ),
         )
-        column.addView(button("Source code") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/shivam098/thumbfree"))) }.spaced(8, 0))
+        column.addView(button("Source code") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/shivam098/thumbfree-android"))) }.spaced(8, 0))
     }
 
     override fun onResume() {

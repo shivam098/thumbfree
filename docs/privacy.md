@@ -1,6 +1,6 @@
 # ThumbFree privacy policy
 
-*Last updated: 19 November 2026 (Windows added)*
+*Last updated: 20 November 2026 (the Windows app's policy moved to its own repo)*
 
 ThumbFree is a voice-typing app. **It recognises speech on your device and never sends your voice or your text to us
 or anyone else.** There is no account, no advertising and no analytics.
@@ -41,28 +41,10 @@ one includes the audio, the recognised text, the typed text, the model name and 
 - If you send dictations to the developer, they're used only to measure and improve recognition, aren't shared with
   anyone else, and are deleted on request.
 
-## ThumbFree for Windows
+## Other platforms
 
-The same rules apply on Windows, with these differences:
-
-- **Microphone:** on only from one tap of Ctrl+Win to the next (10 minutes at most).
-- **The text box you dictate into:** when you start, ThumbFree uses Windows UI Automation to find out what kind of
-  box it is and to read the text before the cursor. It reads whether the box is a password, search or multi-line box,
-  and whether it's in an email app. It uses this for spacing, capital letters and email or list layout, and then types
-  into that same box. This information isn't stored.
-  - Chrome, Edge and apps built on them describe their text boxes only once their accessibility support is on. When
-    a dictation starts in one of them and its text box can't be seen yet, ThumbFree asks the app to turn it on, the
-    way screen readers do: it reads what kind of element each part of that window is, and the titles of its pages.
-    These are discarded at once.
-  - Nothing else on your screen is read.
-- **History:** stored in `%LOCALAPPDATA%\ThumbFree\history.txt` on your PC. Nothing is kept from password fields or
-  from browser windows that say they're private.
-- **"Help improve ThumbFree":** dictations are kept in `%LOCALAPPDATA%\ThumbFree\samples`. Nothing is kept from
-  password fields, nor from web browsers, because a browser can't reliably say whether a window is private. To share
-  them, you save a zip yourself and send it however you like.
-- **Settings:** stored in `%APPDATA%\ThumbFree\settings.json`.
-- **Logs:** stored in `%LOCALAPPDATA%\ThumbFree\logs`. They hold timings and error names, never your words.
-- **Uninstalling:** delete the app's folder, then `%LOCALAPPDATA%\ThumbFree` and `%APPDATA%\ThumbFree`.
+ThumbFree for Windows has [its own privacy policy](https://github.com/shivam098/thumbfree-windows/blob/main/docs/privacy.md),
+with the same rules.
 
 ## Children
 
@@ -71,4 +53,4 @@ ThumbFree isn't directed at children under 13.
 ## Changes and contact
 
 Changes to this policy are published at this address, with the date at the top. For questions or deletion requests,
-open an issue at <https://github.com/shivam098/thumbfree/issues>.
+open an issue at <https://github.com/shivam098/thumbfree-android/issues>.

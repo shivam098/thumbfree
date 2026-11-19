@@ -1,3 +1,6 @@
+> ThumbFree for Windows 0.8.0 links to this page from Help, so it stays here. The notices for later versions are in
+> [thumbfree-windows](https://github.com/shivam098/thumbfree-windows/blob/main/THIRD-PARTY-NOTICES.md).
+
 # Third-party notices
 
 ThumbFree for Windows runs these libraries and downloads these models (each once, checked against a fixed SHA-256).

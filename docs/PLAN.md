@@ -10,8 +10,9 @@ drain when idle.
 
 **Status (Nov 2026):** Android is built (v0.7.0: voice keyboard and bubble with tap-to-start / tap-to-finish, live
 typing, History, first-run guide; Google Play ready). Windows is built (v0.8.0: every section 3 feature, replacing Voice
-Dictation). iPhone and Mac are next. [Section 3](#3-feature-reference-built-on-android-copy-to-every-platform) is the
-feature reference that every platform implements.
+Dictation). The Mac is next, then iPhone. Each platform has its own repo (section 5); this plan, in thumbfree-android,
+covers all of them. [Section 3](#3-feature-reference-built-on-android-copy-to-every-platform) is the feature reference
+that every platform implements.
 
 ## 1. Positioning: offline is the selling point
 
@@ -29,7 +30,7 @@ Suggested tagline: *"Type with your voice, not your thumbs. 100% offline."*
 
 | Option | Notes |
 |---|---|
-| **ThumbFree** (chosen) | Describes the benefit (no thumbs on a phone, no fingers on a keyboard). Repo `github.com/shivam098/thumbfree`. |
+| **ThumbFree** (chosen) | Describes the benefit (no thumbs on a phone, no fingers on a keyboard). One repo per platform: `github.com/shivam098/thumbfree-android`, `-windows`, `-mac` and `-ios`. |
 | Zubaan ("tongue / language" in Hindi-Urdu) | Signals the Hinglish strength. Check trademarks (there is a publisher called Zubaan Books). |
 | SayWrite, Bolo | **Taken**: existing open-source dictation apps. |
 
@@ -363,18 +364,21 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
   - Honest microphone and background-audio usage strings.
   - Privacy "nutrition label": data not collected.
 - **Build and test:**
-  - Xcode project in `apple/`.
+  - Its own repo, [thumbfree-ios](https://github.com/shivam098/thumbfree-ios), on the Mac app's Swift core.
   - GitHub `macos-latest` runners build it and run unit tests and vectors on the iOS Simulator.
   - The microphone, the session handoff and the keyboard need a **real iPhone** and TestFlight.
 
 ### 4.3 Mac (new)
+
+Repo: [thumbfree-mac](https://github.com/shivam098/thumbfree-mac); its `docs/mac.md` has the full design and phases.
 
 - **Shape:**
   - A menu-bar app (`LSUIElement`) plus a settings window.
   - The status pill is a non-activating, click-through `NSPanel` showing the live preview and the warnings (3.6).
 - **Hotkey:** press Fn/Globe once to start and once more to finish (3.0), via a `CGEventTap` on `flagsChanged` (needs
   **Input Monitoring**). Alternatives: Right Option or a custom chord. Fn may need "Press 🌐 key to: Do Nothing"; the
-  guide explains it. Esc cancels. The pill shows the listening and transcribing states (3.0).
+  guide explains it. Esc cancels. The pill shows the listening and transcribing states (3.0). Jarvis for Mac uses Fn
+  too: each app warns when the other is running, as on Windows.
 - **Optional floating mic** next to the focused text field (3.5).
 - **Audio:** `AVAudioEngine` at 16 kHz mono, plus the Microphone permission.
 - **Insertion:**
@@ -400,6 +404,8 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
   - Not the Mac App Store: its sandbox blocks global event taps and pasting into other apps.
 
 ### 4.4 Windows (from Voice Dictation 0.3)
+
+Repo: [thumbfree-windows](https://github.com/shivam098/thumbfree-windows); its `docs/windows.md` is the user guide.
 
 - Keep: Ctrl+Win to start and to finish (3.0; it was hold-to-talk before 0.4), Ctrl+Win+Space as an alias, Esc cancel,
   Alt+Shift+H language, Alt+Shift+Z paste last. Clipboard
@@ -452,7 +458,7 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
 
 ## 5. Architecture: one behaviour, native apps, shared test data
 
-**Decision (Nov 2026): native apps per platform.**
+**Decision (Nov 2026): native apps per platform, one repo per platform.**
 
 - A keyboard has to open instantly and stay small, which rules out shipping a .NET runtime on phones.
 - Behaviour is kept identical by **shared test vectors**, not shared binaries:
@@ -460,31 +466,35 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
   - `layout.tsv`, emails, lists and corrections.
 - Every port runs both on the real device in CI.
 
-| Platform | App | Core logic | Speech |
-|---|---|---|---|
-| Android | Kotlin | `android/core` (Kotlin, JVM-testable) | sherpa-onnx AAR + whisper.cpp via JNI |
-| iPhone + Mac | Swift / SwiftUI + AppKit | **Recommended: reuse `android/core` through Kotlin Multiplatform** as an XCFramework (one source for Android, iPhone and Mac). Fallback: a Swift port held to the same vectors. | sherpa-onnx xcframework + whisper.cpp (Metal / Core ML) |
-| Windows | C# / WPF | `windows/src/ThumbFree.Core` (the C# reference, held to the same vectors) | sherpa-onnx (C# API) for Kroko and Parakeet, Whisper.net for Hindi + English |
+| Platform | Repo | App | Core logic | Speech |
+|---|---|---|---|---|
+| Android | [thumbfree-android](https://github.com/shivam098/thumbfree-android) (this one) | Kotlin | `android/core` (Kotlin, JVM-testable) | sherpa-onnx AAR + whisper.cpp via JNI |
+| Windows | [thumbfree-windows](https://github.com/shivam098/thumbfree-windows) | C# / WPF | `src/ThumbFree.Core` (the C# reference, held to the same vectors) | sherpa-onnx (C# API) for Kroko and Parakeet, Whisper.net for Hindi + English |
+| Mac | [thumbfree-mac](https://github.com/shivam098/thumbfree-mac) | Swift / AppKit | A Swift port of the C# core, held to the same vectors | sherpa-onnx + whisper.cpp (Metal) |
+| iPhone | [thumbfree-ios](https://github.com/shivam098/thumbfree-ios) | Swift / SwiftUI | The Mac app's Swift core | sherpa-onnx xcframework + whisper.cpp (Metal / Core ML) |
 
-**Kotlin Multiplatform for Apple** means one fix to the filler or layout rules reaches Android, iPhone and Mac at once.
+**Decision (Nov 2026): the Apple core is Swift**, not Kotlin Multiplatform: with one repo per platform, KMP would tie the
+Mac and iPhone builds to the Android repo. The Swift core is held to the same vectors, like Windows.
 
-- The core is already pure Kotlin with no Android calls, so it's a good fit.
-- Risk: the Kotlin/Native regex engine differs from Java's and Android's. That's exactly what the vectors catch: run
-  them on the iOS Simulator in CI.
-- If the spike shows problems (framework size, regex gaps), port to Swift instead.
+**Shared test data:** `tests/vectors` and `tests/audio` are the same files in all four repos. Each repo's **Test data in
+sync** check (`.github/workflows/test-data.yml`) compares its copy with the other three by git blob id and fails while
+any differs, so a change made in one repo is copied to all of them.
 
-Repo layout:
+This repo's layout:
 
 ```
-thumbfree/
-  android/            Kotlin: core/, whisper/, whisper-v82/, app/   (built)
-  apple/              ThumbFree.xcodeproj: iOS app + keyboard extension, macOS menu-bar app, shared Swift package
-  windows/            later: moved from shivam098/windows-dictation
-  tests/vectors/      formatter.tsv, layout.tsv   (all platforms, on device)
-  tests/audio/        speech clips for on-device engine tests
+thumbfree-android/
+  android/            Kotlin: core/, whisper/, whisper-v82/, app/
+  tests/vectors/      formatter.tsv, layout.tsv   (the same files in every ThumbFree repo)
+  tests/audio/        speech clips for on-device engine tests (the same files in every ThumbFree repo)
   third_party/        whisper.cpp (submodule)
-  docs/               PLAN.md, android.md, apple.md (to write)
+  docs/               PLAN.md (every platform), android.md, google-play.md, privacy.md
 ```
+
+The repo was called `thumbfree` until November 2026, when it also held the Windows app. GitHub redirects the old
+address, which apps already installed still use to download speech models: **never create a new repo named
+`shivam098/thumbfree`**, because that would end the redirect. For the same reason this repo keeps
+`windows/THIRD-PARTY-NOTICES.md` and a `docs/windows.md` that points to thumbfree-windows: Windows 0.8.0 links to both.
 
 ## 6. Phases
 
@@ -495,14 +505,15 @@ thumbfree/
 | **Android 0.6** ✅ | Live typing (3.10): Kroko streaming English tier, composing text in the keyboard, faster live Hinglish | Released v0.6.0 |
 | **Android 0.7** ✅ | History (3.11): every dictation kept locally for 30 days, tap to copy | Released v0.7.0 |
 | **Android 0.8** | Real-phone fixes from the Pixel 11 test (bubble in WhatsApp/Gmail/Chrome, call interruption), then Google Play: internal test, then a closed test (12+ testers for 14 days, required for new personal accounts), then production | Bubble works in the top 10 apps; Play listing approved |
-| **Apple spike** (week 1) | (a) The `android/core` KMP framework passing both vector files on the iOS Simulator and macOS; (b) iPhone: keyboard Start → app session → swipe back → mic in the keyboard → text inserted, on a real iPhone; (c) Parakeet 110M speed on iPhone and Mac | All three work, or the fallback (Swift port, different session design) is chosen |
-| **iPhone 0.x** (weeks 2–5) | Keyboard + app session, models, guide, notifications, Shortcuts action, opt-in samples | TestFlight with the acceptance list (Messages, WhatsApp, Mail, Notes, Safari) |
-| **Mac 0.x** (weeks 4–7) | Menu bar, hotkey, pill, paste with the same-field check, guide, optional floating mic | Notarized `.dmg`; acceptance on a real Mac (Notes, Mail, Safari, Chrome, Slack, VS Code, Terminal) |
+| **Apple spike** (week 1) | (a) The Swift core passing both vector files on macOS and the iOS Simulator; (b) iPhone: keyboard Start → app session → swipe back → mic in the keyboard → text inserted, on a real iPhone; (c) Parakeet 110M speed on iPhone and Mac | All three work, or a different session design is chosen |
+| **Mac 0.x** (next) | Swift core, speech engines, menu bar, Fn hotkey, pill, paste with the same-field check, guide, optional floating mic ([thumbfree-mac docs/mac.md](https://github.com/shivam098/thumbfree-mac/blob/main/docs/mac.md)) | Notarized `.dmg`; acceptance on a real Mac (Notes, Mail, Safari, Chrome, Slack, VS Code, Terminal) |
+| **Jarvis for Mac** | The voice assistant (dictation, "Hey Jarvis" commands, the AI brain) on the Mac engine, in its own repo `mac-voice-assistant`, also on Fn | After ThumbFree Mac 0.x |
+| **iPhone 0.x** | Keyboard + app session, models, guide, notifications, Shortcuts action, opt-in samples, on the Mac's Swift core | TestFlight with the acceptance list (Messages, WhatsApp, Mail, Notes, Safari) |
 | **Windows 0.8** ✅ | Every section 3 feature on Windows, replacing Voice Dictation: Kroko live typing (phrases typed at pauses, the rest in the pill), Parakeet, smart formatting, the word list, History, the app window and first-run guide, notifications, opt-in samples | Released v0.8.0; CI: Core, Speech and App tests, x64 and ARM64 builds; self-test labs on a Chrome test page |
 | **Windows 1.0** | Real-app labs (Notepad, Word, Teams, WhatsApp, Outlook, VS Code); archive `windows-dictation`; winget | Real-app labs pass; winget |
 | **Later** | Auto language pick (English word overlap ≥ 0.5 in 16/17 English clips, 0/6 Hinglish); learn from corrections; NPU / Neural Engine for Apex | |
 
-One product version across platforms; release assets per platform.
+One product version across platforms; each platform's repo publishes its own release.
 
 ## 7. Testing
 
@@ -562,11 +573,12 @@ One product version across platforms; release assets per platform.
 
 ## 11. Decisions needed from you
 
-1. **Apple core:** reuse the Kotlin core through Kotlin Multiplatform (recommended), or port to Swift?
-2. **iPhone session timeout:** how long a dictation session stays ready after the last use (suggest 5 minutes; 15 and
+Decided in November 2026: the Apple core is Swift (section 5); Mac comes before iPhone; Jarvis for Mac is its own app,
+on Fn like ThumbFree, and each app warns when the other is running.
+
+1. **iPhone session timeout:** how long a dictation session stays ready after the last use (suggest 5 minutes; 15 and
    "until I end it" as options)?
-3. **Accounts and devices:** the Apple Developer account (US$99/yr, covers iPhone and Mac), plus a real iPhone and Mac
+2. **Accounts and devices:** the Apple Developer account (US$99/yr, covers iPhone and Mac), plus a real iPhone and Mac
    to test on.
-4. **Data sharing destination:** keep "Share via the share sheet" only, or set up a server with a privacy policy for
+3. **Data sharing destination:** keep "Share via the share sheet" only, or set up a server with a privacy policy for
    opt-in uploads?
-5. **Order after the Android phone test:** iPhone first or Mac first?

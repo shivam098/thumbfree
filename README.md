@@ -26,28 +26,24 @@ servers; ThumbFree never does.
 - **Your words**: a personal dictionary (`journals = genres`) and a "words I use often" list that fixes near misses
   ("Kubirnets" → "Kubernetes"), pre-filled from your line of work if you like.
 
-| Platform | Status |
-|---|---|
-| Android | **Preview**: voice keyboard and bubble |
-| Windows | **Preview**: Ctrl+Win in any app, from the tray (replaces [Voice Dictation](https://github.com/shivam098/windows-dictation)) |
-| macOS | Planned |
+| Platform | Repo | Status |
+|---|---|---|
+| Android | this one | **Preview**: voice keyboard and bubble |
+| Windows | [thumbfree-windows](https://github.com/shivam098/thumbfree-windows) | **Preview**: Ctrl+Win in any app, from the tray (replaces [Voice Dictation](https://github.com/shivam098/windows-dictation)) |
+| Mac | [thumbfree-mac](https://github.com/shivam098/thumbfree-mac) | In development |
+| iPhone | [thumbfree-ios](https://github.com/shivam098/thumbfree-ios) | Planned |
 
-The full plan is in [docs/PLAN.md](docs/PLAN.md).
+The full plan for every platform is in [docs/PLAN.md](docs/PLAN.md).
 
-## Windows
-
-Download `ThumbFree-x.y.z-win-arm64.zip` (Snapdragon and other ARM PCs) or `ThumbFree-x.y.z-win-x64.zip` (Intel and
-AMD) from [Releases](https://github.com/shivam098/thumbfree/releases), unzip it and run `ThumbFree.exe`. A short
-guide sets up the microphone and the speech model. Then click into any text box, **tap Ctrl+Win**, speak, and tap it
-again. With Live typing, each phrase is typed as soon as you've moved on to the next one.
-
-Everything else, from the models to the settings file and how to build it, is in [docs/windows.md](docs/windows.md).
+`tests/vectors` (how each test sentence must come out) and `tests/audio` (speech recordings) are the same files in
+every ThumbFree repo. The **Test data in sync** check fails while this copy differs from the others: when you change
+one, copy the change to all four repos.
 
 ## Android
 
 ### Install
 
-1. Download `ThumbFree-x.y.z.apk` from [Releases](https://github.com/shivam098/thumbfree/releases) and open it. Android
+1. Download `ThumbFree-x.y.z.apk` from [Releases](https://github.com/shivam098/thumbfree-android/releases) and open it. Android
    asks you to allow installs from your browser or file manager the first time.
 2. Open **ThumbFree**. A short guide walks you through the microphone, the speech model (downloads once, 79 MB for
    live English, then works offline), the keyboard, and a practice email and list.
@@ -98,8 +94,8 @@ Privacy policy: [docs/privacy.md](docs/privacy.md).
 See [docs/android.md](docs/android.md) for the architecture, how a dictation flows, and how to build and test.
 
 ```sh
-git clone --recurse-submodules https://github.com/shivam098/thumbfree
-cd thumbfree/android && ./gradlew :app:assembleDebug
+git clone --recurse-submodules https://github.com/shivam098/thumbfree-android
+cd thumbfree-android/android && ./gradlew :app:assembleDebug
 ```
 
 ## Credits
@@ -111,6 +107,4 @@ Live English: the Kroko streaming model by [Banafo](https://huggingface.co/Banaf
 CC BY-SA 4.0) and the [Edge-Punct-Casing](https://huggingface.co/frankyoujian/Edge-Punct-Casing)
 punctuation model (Apache-2.0), both unmodified and downloaded separately from the app.
 Hindi + English: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) running quantized conversions of
-Oriserve's Whisper Hindi-to-Hinglish models (Apache-2.0). On Windows, through [Whisper.net](https://github.com/sandrohanea/whisper.net)
-(MIT), with [Silero VAD](https://github.com/snakers4/silero-vad) (MIT) to find pauses and
-[NAudio](https://github.com/naudio/NAudio) (MIT) for the microphone.
+Oriserve's Whisper Hindi-to-Hinglish models (Apache-2.0).
