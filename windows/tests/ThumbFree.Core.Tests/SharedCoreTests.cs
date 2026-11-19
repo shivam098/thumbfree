@@ -55,6 +55,7 @@ public class SharedCoreTests
         Assert.Equal("Please send me the latest build, logs.", LiveText.MergePunctuation("Please send me the latest build logs.", "Please send me the latest build, logs.,"));
         Assert.Equal("Push the build.", LiveText.MergePunctuation("push the build.", "Push the Build.."));
         Assert.Equal("Ready? Go!", LiveText.MergePunctuation("ready go", "Ready?. Go!!"));
+        Assert.Equal("We shipped it, today", LiveText.MergePunctuation("we shipped it, today", "We shipped it,. today"));
     }
 
     [Fact]

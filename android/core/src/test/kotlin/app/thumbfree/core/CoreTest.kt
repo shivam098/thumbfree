@@ -102,6 +102,7 @@ class CoreTest {
     @Test
     fun dictation_joins_the_text_already_there() {
         assertEquals(" and then", Insertion.withSpacing("We shipped it", "and then"))
+        assertEquals(" and then", Insertion.withSpacing("We shipped it", " and then"))
         assertEquals("Hello", Insertion.withSpacing("", "Hello"))
         assertEquals("Hello", Insertion.withSpacing("Hi ", "Hello"))
         assertEquals(", right?", Insertion.withSpacing("ok", ", right?"))
@@ -179,6 +180,7 @@ class CoreTest {
         assertEquals("Please send me the latest build, logs.", LiveText.mergePunctuation("Please send me the latest build logs.", "Please send me the latest build, logs.,"))
         assertEquals("Push the build.", LiveText.mergePunctuation("push the build.", "Push the Build.."))
         assertEquals("Ready? Go!", LiveText.mergePunctuation("ready go", "Ready?. Go!!"))
+        assertEquals("We shipped it, today", LiveText.mergePunctuation("we shipped it, today", "We shipped it,. today"))
     }
 
     @Test

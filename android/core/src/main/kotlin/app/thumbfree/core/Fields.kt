@@ -57,11 +57,11 @@ object Insertion {
         return trimmed.isNotEmpty() && trimmed.last() !in ".!?\n" && before.last() != '\n'
     }
 
-    /** The text to commit: a leading space when it would otherwise run into the previous word. */
+    /** The text to commit: a leading space when it would otherwise run into the previous word. Text that starts with whitespace already has its space. */
     fun withSpacing(before: CharSequence?, text: String): String {
         if (text.isEmpty() || before.isNullOrEmpty()) return text
         val last = before.last()
-        val needsSpace = !last.isWhitespace() && text[0] !in ",.;:!?)\n" && last !in "([{\"'“‘/@#"
+        val needsSpace = !last.isWhitespace() && !text[0].isWhitespace() && text[0] !in ",.;:!?)\n" && last !in "([{\"'“‘/@#"
         return if (needsSpace) " $text" else text
     }
 

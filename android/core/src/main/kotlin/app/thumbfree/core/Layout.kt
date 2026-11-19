@@ -25,6 +25,17 @@ object Layout {
             ?: corrected
     }
 
+    /**
+     * Smart formatting for a dictation typed after [before]: [apply], and a laid-out list or email starts on a line of its
+     * own. A correction or a spoken "new line" doesn't move the start.
+     */
+    fun shape(text: String, before: CharSequence?, multiLine: Boolean, email: Boolean): String {
+        val atStart = before.isNullOrBlank()
+        val laid = apply(text, LayoutContext(multiLine, atStart, email))
+        val laidOut = laid != SelfCorrection.apply(text) && laid.contains('\n')
+        return if (multiLine && laidOut && !atStart && before?.lastOrNull() != '\n') "\n" + laid else laid
+    }
+
     // ---- email ----
 
     private const val NAME_WORD = """[\p{L}][\p{L}'’.-]*"""

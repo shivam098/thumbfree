@@ -159,8 +159,9 @@ class StreamingRecognizer private constructor(
         /** Flushes the last words and returns the whole text; the session can't be used afterwards. */
         fun finish(): String = synchronized(lock) {
             if (!closed && !done) {
-                // A little silence lets the model emit the last word before the stream ends.
-                stream.acceptWaveform(FloatArray(SpeechAudio.SAMPLE_RATE * 3 / 10), SpeechAudio.SAMPLE_RATE)
+                // Kroko emits a word only after hearing about 0.6–0.9 s past it: without this, tapping to finish right
+                // after speaking would lose the last words.
+                stream.acceptWaveform(FloatArray(SpeechAudio.SAMPLE_RATE), SpeechAudio.SAMPLE_RATE)
                 stream.inputFinished()
                 while (recognizer.isReady(stream)) recognizer.decode(stream)
                 val last = recognizer.getResult(stream).text.trim()
@@ -183,16 +184,12 @@ class StreamingRecognizer private constructor(
     fun session() = Session()
 
     /**
-     * Kroko writes a few marks itself ("push the build."); given those, the punctuation model adds its own after them
-     * ("build.."). Only the model's marks are kept anyway ([LiveText.mergePunctuation]), so it gets the bare words.
+     * Punctuation from the small model, merged into the recognizer's words. It gets the text as recognized: it mostly
+     * repeats the marks it's given (Kroko writes a few itself, like a question's "?"), and sometimes adds another after
+     * them ("build.."), which [LiveText.mergePunctuation] reduces to the first.
      */
     private fun punctuate(text: String): String =
-        punctuation?.let { model ->
-            runCatching {
-                val bare = text.split(' ').map { it.trimEnd('.', ',', '?', '!', ';', ':') }.filter { it.isNotEmpty() }.joinToString(" ")
-                LiveText.mergePunctuation(text, model.addPunctuation(bare))
-            }.getOrNull()
-        } ?: text
+        punctuation?.let { runCatching { LiveText.mergePunctuation(text, it.addPunctuation(text)) }.getOrNull() } ?: text
 
     /** The whole recording at once (tests, and the fallback when no live session ran). */
     override fun transcribe(samples: FloatArray, preview: Boolean, prompt: String?): String? {
