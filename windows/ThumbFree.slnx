@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ThumbFree.App/ThumbFree.App.csproj" />
+    <Project Path="src/ThumbFree.Core/ThumbFree.Core.csproj" />
+    <Project Path="src/ThumbFree.Speech/ThumbFree.Speech.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ThumbFree.Core.Tests/ThumbFree.Core.Tests.csproj" />
+  </Folder>
+</Solution>
