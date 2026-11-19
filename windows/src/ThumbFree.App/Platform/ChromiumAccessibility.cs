@@ -90,8 +90,28 @@ internal static class ChromiumAccessibility
         }
 
         ReadName(root);
-        ReadDocuments(root);
+        ReadPages(root, pages);
         return true;
+    }
+
+    /// <summary>
+    /// The UI Automation part of <see cref="Wake"/>, again: the page's document appears only after Chromium has turned on
+    /// its native accessibility, so a wait for the box repeats this once.
+    /// </summary>
+    public static void ReadPagesAgain(nint root) => ReadPages(root, PageWindows(root));
+
+    /// <summary>
+    /// What screen readers ask first: the kind of each element and the documents' names, from the window and from each
+    /// page window's own root, whose child is the page's document (Chrome 157 doesn't always link its pages into the
+    /// window).
+    /// </summary>
+    private static void ReadPages(nint root, List<nint> pages)
+    {
+        ReadDocuments(root, TreeScope.Descendants);
+        foreach (var page in pages.Take(MaxPageNameReads))
+        {
+            ReadDocuments(page, TreeScope.Children);
+        }
     }
 
     /// <summary>
@@ -143,12 +163,12 @@ internal static class ChromiumAccessibility
         return document;
     }
 
-    /// <summary>What screen readers ask first: the kind of each element (UI Automation evaluates it for the search), and the documents' names.</summary>
-    private static void ReadDocuments(nint root)
+    /// <summary>What screen readers ask first, in <paramref name="scope"/> of <paramref name="window"/>: the kind of each element (UI Automation evaluates it for the search), and the documents' names.</summary>
+    private static void ReadDocuments(nint window, TreeScope scope)
     {
         try
         {
-            foreach (AutomationElement document in AutomationElement.FromHandle(root).FindAll(TreeScope.Descendants, IsDocument))
+            foreach (AutomationElement document in AutomationElement.FromHandle(window).FindAll(scope, IsDocument))
             {
                 try
                 {

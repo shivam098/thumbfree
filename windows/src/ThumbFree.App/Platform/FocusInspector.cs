@@ -99,6 +99,7 @@ internal static class FocusInspector
         }
 
         var waited = System.Diagnostics.Stopwatch.StartNew();
+        var askedAgain = false;
         while (waited.ElapsedMilliseconds < 1200)
         {
             Thread.Sleep(50);
@@ -106,6 +107,12 @@ internal static class FocusInspector
             {
                 Log.Info($"web page accessibility on in {waited.ElapsedMilliseconds} ms");
                 return now;
+            }
+
+            if (!askedAgain && waited.ElapsedMilliseconds >= 400)
+            {
+                askedAgain = true;
+                ChromiumAccessibility.ReadPagesAgain(root);
             }
         }
 
