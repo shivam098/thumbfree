@@ -13,7 +13,11 @@ internal static partial class ClipboardPaste
     /// <summary>How long the target app gets to read the clipboard before it is restored.</summary>
     public static int RestoreDelayMs { get; set; } = 350;
 
-    public static void Paste(string text)
+    /// <summary>
+    /// Puts <paramref name="text"/> on the clipboard and presses Ctrl+V, then puts the previous clipboard back.
+    /// <paramref name="beforeKeys"/> runs right before Ctrl+V; if it throws, nothing is pasted and the clipboard is put back.
+    /// </summary>
+    public static void Paste(string text, Action? beforeKeys = null)
     {
         object? previous = null;
         uint ourSequence = 0;
@@ -29,9 +33,30 @@ internal static partial class ClipboardPaste
             ourSequence = GetClipboardSequenceNumber();
         });
 
+        try
+        {
+            beforeKeys?.Invoke();
+        }
+        catch (Exception)
+        {
+            try
+            {
+                Restore(previous, ourSequence);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
+            {
+                // The reason not to paste matters more than a busy clipboard.
+            }
+
+            throw;
+        }
+
         KeyboardInput.PressChord("Ctrl+V");
         Thread.Sleep(RestoreDelayMs);
+        Restore(previous, ourSequence);
+    }
 
+    private static void Restore(object? previous, uint ourSequence) =>
         RunSta(() =>
         {
             if (GetClipboardSequenceNumber() != ourSequence)
@@ -49,7 +74,6 @@ internal static partial class ClipboardPaste
                 System.Windows.Clipboard.Clear();
             }
         });
-    }
 
     /// <summary>Copies every clipboard format that can be read, so it can be put back after pasting.</summary>
     private static System.Windows.DataObject? Snapshot()

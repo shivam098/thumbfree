@@ -108,12 +108,14 @@ internal static class KeyboardInput
     public static void WaitForModifiersReleased(int timeoutMs = 1000)
     {
         var deadline = Environment.TickCount64 + timeoutMs;
-        while (Environment.TickCount64 < deadline &&
-               (IsDown(0x10) || IsDown(0x11) || IsDown(0x12) || IsDown(0x5B) || IsDown(0x5C)))
+        while (Environment.TickCount64 < deadline && ModifiersDown())
         {
             Thread.Sleep(15);
         }
     }
+
+    /// <summary>Ctrl, Alt, Shift or a Windows key is held now.</summary>
+    public static bool ModifiersDown() => IsDown(0x10) || IsDown(0x11) || IsDown(0x12) || IsDown(0x5B) || IsDown(0x5C);
 
     private static bool IsDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
 

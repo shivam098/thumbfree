@@ -79,63 +79,61 @@ internal static class FocusInspector
     }
 
     /// <summary>
-    /// The element with the keyboard focus. A Chromium app whose pages' accessibility isn't on yet reports the focus as a
-    /// pane: it's asked the way screen readers ask (<see cref="ChromiumAccessibility.Wake"/>), and the focus is read again
-    /// for up to 1.2 s. If the page still isn't there after 0.4 s, the window's elements are read as screen readers do
-    /// (<see cref="ChromiumAccessibility.ReadElements"/>). Nothing is remembered: a pane that stays a pane (the focus
-    /// isn't in a text box) is asked again next time.
+    /// The element with the keyboard focus, for the read when a dictation starts (and self-tests). A Chromium app whose
+    /// pages' accessibility isn't on yet reports the focus as a pane: it's asked the way screen readers ask
+    /// (<see cref="ChromiumAccessibility.Wake"/>), and the focus is read again (<see cref="Focused"/>) for up to 1.2 s.
+    /// Nothing is remembered: a pane that stays a pane (the focus isn't in a text box) is asked again at the next
+    /// dictation. The checks before each typed piece use <see cref="Focused"/>, which never wakes anything.
     /// </summary>
     /// <param name="window">The top-level window; the foreground one when 0.</param>
     public static AutomationElement? FocusedElement(nint window = 0)
     {
-        var focused = Focused();
+        var root = window != 0 ? window : Win32.GetAncestor(Win32.GetForegroundWindow(), Win32.GA_ROOT);
+        var focused = Focused(root);
+        if (focused is null || !IsPane(focused) || root == 0 || !ChromiumAccessibility.Wake(root))
+        {
+            return focused;
+        }
+
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (waited.ElapsedMilliseconds < 1200)
+        {
+            Thread.Sleep(50);
+            if (Focused(root) is { } now && !IsPane(now))
+            {
+                Log.Info($"web page accessibility on in {waited.ElapsedMilliseconds} ms");
+                return now;
+            }
+        }
+
+        Log.Info("the focus stayed on a pane in a Chromium window");
+        return Focused(root) ?? focused;
+    }
+
+    /// <summary>
+    /// The element with the keyboard focus, as it is: nothing is woken (see <see cref="FocusedElement"/>). When UI
+    /// Automation reports a pane in a window with Chromium pages (Chrome 157 does even once a page's accessibility is
+    /// on), the page element that has the keyboard focus (<see cref="ChromiumAccessibility.FocusedInPage"/>).
+    /// </summary>
+    /// <param name="window">The top-level window; the foreground one when 0.</param>
+    public static AutomationElement? Focused(nint window = 0)
+    {
+        var focused = GlobalFocus();
         if (focused is null || !IsPane(focused))
         {
             return focused;
         }
 
         var root = window != 0 ? window : Win32.GetAncestor(Win32.GetForegroundWindow(), Win32.GA_ROOT);
-        if (root == 0 || !ChromiumAccessibility.Wake(root))
-        {
-            return focused;
-        }
-
-        var waited = System.Diagnostics.Stopwatch.StartNew();
-        var now = FocusedField(waited, untilMs: 400);
-        if (now is null)
-        {
-            ChromiumAccessibility.ReadElements(root);
-            now = FocusedField(waited, untilMs: 1200);
-        }
-
-        if (now is not null)
-        {
-            Log.Info($"web page accessibility on in {waited.ElapsedMilliseconds} ms");
-            return now;
-        }
-
-        Log.Info("the focus stayed on a pane in a Chromium window");
-        return Focused() ?? focused;
-    }
-
-    /// <summary>The focus once it's no longer a pane, read every 50 ms until <paramref name="untilMs"/>; null if it stays one.</summary>
-    private static AutomationElement? FocusedField(System.Diagnostics.Stopwatch waited, int untilMs)
-    {
-        while (waited.ElapsedMilliseconds < untilMs)
-        {
-            Thread.Sleep(50);
-            if (Focused() is { } now && !IsPane(now))
-            {
-                return now;
-            }
-        }
-
-        return null;
+        return root != 0 && ChromiumAccessibility.PageWindows(root).Count > 0
+            ? ChromiumAccessibility.FocusedInPage(focused, root) ?? focused
+            : focused;
     }
 
     /// <summary>
     /// True when the field that has focus now is <paramref name="start"/>'s (same top-level window and, when UI
-    /// Automation identified it, the same element). Null when it can't be checked in time.
+    /// Automation identified it, the same element). Null when it can't be checked in time, or when the focus is a pane
+    /// in a Chromium window whose page element can't be found: then only the window is known to be the same.
     /// </summary>
     public static bool? IsSameField(FocusedField start, WindowInfo? now, int timeoutMs = 600)
     {
@@ -151,7 +149,20 @@ internal static class FocusInspector
 
         try
         {
-            var check = Task.Run(() => Focused() is { } focused && Id(focused) is { } id ? id.AsSpan().SequenceEqual(start.ElementId) : (bool?)null);
+            var check = Task.Run(() =>
+            {
+                if (Focused(now.Handle) is not { } focused)
+                {
+                    return (bool?)null;
+                }
+
+                if (IsPane(focused) && ChromiumAccessibility.PageWindows(now.Handle).Count > 0)
+                {
+                    return null;
+                }
+
+                return Id(focused) is { } id ? id.AsSpan().SequenceEqual(start.ElementId) : null;
+            });
             return check.Wait(timeoutMs) ? check.Result : null;
         }
         catch (AggregateException)
@@ -178,7 +189,7 @@ internal static class FocusInspector
             var addressBar = className.EndsWith("OmniboxViewViews", StringComparison.Ordinal) || (browser && controlType == ControlType.Edit && !InPage(element));
             var search = addressBar || name.Contains("search", StringComparison.OrdinalIgnoreCase) ||
                 (current.AutomationId ?? string.Empty).Contains("search", StringComparison.OrdinalIgnoreCase);
-            bool? multiLine = password || search ? false : IsMultiLine(element, current, window.ProcessName, browser);
+            bool? multiLine = password || search ? false : IsMultiLine(element, current, window, browser);
             var email = !search && (EmailProcesses.Contains(window.ProcessName) || (browser && WebmailTitles.Any(t => window.Title.Contains(t, StringComparison.Ordinal))));
             var privateWindow = IsPrivateWindow(window);
             var (before, caretKnown) = password ? (null, false) : TextBeforeCaret(element);
@@ -201,14 +212,14 @@ internal static class FocusInspector
     /// Whether line breaks are text here: a document, ARIA multiline (browsers' text areas and rich editors), a Win32
     /// edit's ES_MULTILINE, or an editor app. Null when the app doesn't say, which most chat apps don't.
     /// </summary>
-    private static bool? IsMultiLine(AutomationElement element, AutomationElement.AutomationElementInformation current, string process, bool browser)
+    private static bool? IsMultiLine(AutomationElement element, AutomationElement.AutomationElementInformation current, WindowInfo window, bool browser)
     {
         if (current.ControlType == ControlType.Document && !browser)
         {
             return true;
         }
 
-        var aria = UiaAria.FocusedAriaProperties() ?? string.Empty;
+        var aria = UiaAria.AriaProperties(window.Handle, Id(element)) ?? string.Empty;
         if (aria.Contains("multiline=true", StringComparison.OrdinalIgnoreCase))
         {
             return true;
@@ -225,7 +236,7 @@ internal static class FocusInspector
             return (Win32.GetWindowLongPtr(current.NativeWindowHandle, GwlStyle) & EsMultiline) != 0;
         }
 
-        return !browser && MultiLineEditors.Contains(process) && (current.ControlType == ControlType.Edit || current.ControlType == ControlType.Document) ? true : null;
+        return !browser && MultiLineEditors.Contains(window.ProcessName) && (current.ControlType == ControlType.Edit || current.ControlType == ControlType.Document) ? true : null;
     }
 
     /// <summary>
@@ -292,19 +303,20 @@ internal static class FocusInspector
         {
             return read();
         }
-        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or ArgumentException or TimeoutException or System.Runtime.InteropServices.COMException)
         {
             return null;
         }
     }
 
-    private static AutomationElement? Focused()
+    /// <summary>The element UI Automation reports as having the keyboard focus.</summary>
+    private static AutomationElement? GlobalFocus()
     {
         try
         {
             return AutomationElement.FocusedElement;
         }
-        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or System.Runtime.InteropServices.COMException)
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or TimeoutException or System.Runtime.InteropServices.COMException)
         {
             return null;
         }

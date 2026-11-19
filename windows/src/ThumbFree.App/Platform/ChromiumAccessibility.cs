@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,7 +10,9 @@ namespace ThumbFree.App.Platform;
 /// WebView2 apps such as the new Outlook) build the accessibility tree of their pages only once an assistive tool asks
 /// for it. Until then UI Automation reports the focus as a pane, with nothing about the text box: password, lines, the
 /// text before the cursor. <see cref="Wake"/> asks the way screen readers do; the app then keeps basic page accessibility
-/// on while it runs (it may use a little more memory). Nothing read here is kept or logged.
+/// on while it runs (it may use a little more memory). Even then, Chrome 157 reports the focus as the browser's pane,
+/// because its page windows aren't the browser window's children: <see cref="FocusedInPage"/> finds the page element that
+/// has the keyboard focus. Nothing read here is kept or logged.
 /// </summary>
 internal static class ChromiumAccessibility
 {
@@ -25,13 +26,17 @@ internal static class ChromiumAccessibility
     private const nint ScreenReaderHoneyPot = 1;
 
     private const uint ObjIdClient = 0xFFFFFFFC;
-    private const int MaxNameReads = 6;
+    private const int MaxPageNameReads = 8;
+
+    private static readonly Condition IsDocument = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document);
+    private static readonly Condition HasFocus = new PropertyCondition(AutomationElement.HasKeyboardFocusProperty, true);
 
     private static Guid accessibleId = new("618736E0-3C3D-11CF-810C-00AA00389B71");
 
     /// <summary>
     /// The page windows of the top-level window <paramref name="root"/>: its own (WebView2 apps and older Chrome), and
-    /// those of the app's other top-level windows (Chrome 157 keeps them in a separate window).
+    /// those under the app's other top-level windows (Chrome 157 keeps them in a separate window, or parks them in its
+    /// hidden window).
     /// </summary>
     public static List<nint> PageWindows(nint root)
     {
@@ -57,9 +62,12 @@ internal static class ChromiumAccessibility
     }
 
     /// <summary>
-    /// Does what screen readers do so the app builds its pages' accessibility (Chromium's
-    /// AXPlatform::OnScreenReaderHoneyPotQueried and OnMinimalPropertiesUsed): the "screen reader honeypot" query to a
-    /// page window, and a name read through MSAA in the same app. False when the window has no Chromium pages.
+    /// Does what screen readers do so the app builds its pages' accessibility. Chromium turns it on for the whole app
+    /// once a client reads what kind of element a part of a page is, or its name, through UI Automation
+    /// (AXPlatformNodeWin::OnPropertiesUsed): so the window's documents are looked up by control type and their names
+    /// read. Also the "screen reader honeypot" query to the page windows plus an MSAA name read in the same app
+    /// (AXPlatform::OnScreenReaderHoneyPotQueried and OnMinimalPropertiesUsed), which a page window parked in
+    /// Chromium's hidden window ignores. False when the window has no Chromium pages.
     /// </summary>
     public static bool Wake(nint root)
     {
@@ -69,74 +77,92 @@ internal static class ChromiumAccessibility
             return false;
         }
 
-        // Chromium remembers the query for the whole app, so one page window that answers is enough.
         foreach (var page in pages)
         {
-            if (Win32.SendMessageTimeout(page, WmGetObject, 0, ScreenReaderHoneyPot, Win32.SMTO_ABORTIFHUNG, 250, out _) != 0)
-            {
-                break;
-            }
+            Win32.SendMessageTimeout(page, WmGetObject, 0, ScreenReaderHoneyPot, Win32.SMTO_ABORTIFHUNG, 250, out _);
         }
 
-        // The name must be read in the app that owns the pages: the top-level window for Chrome and Electron apps, the
-        // windows between it and the page for WebView2 (its pages belong to a separate browser process).
-        var windows = new List<nint>();
-        for (var window = pages[0]; window != 0 && windows.Count < MaxNameReads; window = Win32.GetAncestor(window, Win32.GA_PARENT))
+        // The name is read in the app that owns the pages: the page windows themselves (WebView2's belong to its own
+        // browser process), and the window (Chrome and Electron apps).
+        foreach (var page in pages.Take(MaxPageNameReads))
         {
-            windows.Add(window);
-            if (window == root || Win32.GetAncestor(window, Win32.GA_ROOT) == window)
-            {
-                break;
-            }
+            ReadName(page);
         }
 
-        if (!windows.Contains(root))
-        {
-            windows.Add(root);
-        }
-
-        foreach (var window in windows)
-        {
-            ReadName(window);
-        }
-
+        ReadName(root);
+        ReadDocuments(root);
         return true;
     }
 
     /// <summary>
-    /// The other way screen readers wake Chromium: reading the control type and name of the window's elements, some of
-    /// which are the pages' own. At most <paramref name="max"/> elements, for at most <paramref name="budgetMs"/>.
+    /// The page element with the keyboard focus, when UI Automation reports a pane in a Chromium window: the deepest
+    /// focused element under the pane, else in the whole window (an element that isn't a document wins over the pages'
+    /// own documents). Null when only panes have the focus.
     /// </summary>
-    public static void ReadElements(nint root, int max = 1000, int budgetMs = 500)
+    public static AutomationElement? FocusedInPage(AutomationElement pane, nint root)
     {
-        var clock = Stopwatch.StartNew();
-        var walker = TreeWalker.RawViewWalker;
-        var queue = new Queue<AutomationElement>();
+        if (Deepest(pane) is { } underPane)
+        {
+            return underPane;
+        }
+
         try
         {
-            queue.Enqueue(AutomationElement.FromHandle(root));
+            return Deepest(AutomationElement.FromHandle(root));
         }
         catch (Exception ex) when (IsUiaFailure(ex))
         {
-            return;
+            return null;
         }
+    }
 
-        for (var read = 0; queue.Count > 0 && read < max && clock.ElapsedMilliseconds < budgetMs; read++)
+    private static AutomationElement? Deepest(AutomationElement scope)
+    {
+        AutomationElement? document = null;
+        try
         {
-            var element = queue.Dequeue();
-            try
+            var focused = scope.FindAll(TreeScope.Descendants, HasFocus);
+            for (var i = focused.Count - 1; i >= 0; i--)
             {
-                _ = element.Current.ControlType;
-                _ = element.Current.Name;
-                for (var child = walker.GetFirstChild(element); child is not null; child = walker.GetNextSibling(child))
+                var type = focused[i].Current.ControlType;
+                if (type == ControlType.Document)
                 {
-                    queue.Enqueue(child);
+                    document ??= focused[i];
+                }
+                else if (type != ControlType.Pane)
+                {
+                    return focused[i];
                 }
             }
-            catch (Exception ex) when (IsUiaFailure(ex))
+        }
+        catch (Exception ex) when (IsUiaFailure(ex))
+        {
+            // Elements come and go while a page loads.
+        }
+
+        return document;
+    }
+
+    /// <summary>What screen readers ask first: the kind of each element (UI Automation evaluates it for the search), and the documents' names.</summary>
+    private static void ReadDocuments(nint root)
+    {
+        try
+        {
+            foreach (AutomationElement document in AutomationElement.FromHandle(root).FindAll(TreeScope.Descendants, IsDocument))
             {
-                // Elements come and go while a page loads.
+                try
+                {
+                    _ = document.Current.Name;
+                }
+                catch (Exception ex) when (IsUiaFailure(ex))
+                {
+                    // A page that went away meanwhile.
+                }
             }
+        }
+        catch (Exception ex) when (IsUiaFailure(ex))
+        {
+            // The window went away, or the app didn't answer in time.
         }
     }
 
@@ -150,7 +176,7 @@ internal static class ChromiumAccessibility
                 _ = accessible.GetType().InvokeMember("accName", BindingFlags.GetProperty, null, accessible, [0], System.Globalization.CultureInfo.InvariantCulture);
             }
         }
-        catch (Exception ex) when (ex is COMException or TargetInvocationException or MissingMethodException or InvalidCastException or InvalidComObjectException)
+        catch (Exception ex) when (ex is COMException or UnauthorizedAccessException or TimeoutException or TargetInvocationException or MissingMethodException or InvalidCastException or InvalidComObjectException)
         {
             // An app that doesn't answer MSAA simply isn't woken this way.
         }
@@ -170,7 +196,7 @@ internal static class ChromiumAccessibility
     }
 
     private static bool IsUiaFailure(Exception ex) =>
-        ex is ElementNotAvailableException or InvalidOperationException or ArgumentException or COMException;
+        ex is ElementNotAvailableException or InvalidOperationException or ArgumentException or TimeoutException or UnauthorizedAccessException or COMException;
 
     [DllImport("oleacc.dll")]
     private static extern int AccessibleObjectFromWindow(nint window, uint objectId, ref Guid interfaceId, [MarshalAs(UnmanagedType.IUnknown)] out object? accessible);

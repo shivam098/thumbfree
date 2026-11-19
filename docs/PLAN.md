@@ -416,19 +416,29 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
 - Distribution: zips on GitHub Releases, then winget. Code signing optional.
 - **Built in v0.8 (replaces Voice Dictation, whose settings, dictionary and models carry over):**
   - The text box is read once, when dictation starts (UI Automation: password, single- or multi-line including ARIA,
-    search and address bars, email apps and webmail, the text before the cursor). Before each piece is typed, the
-    same window and the same element must have the focus; otherwise nothing more is typed and the whole dictation goes
-    to the tap-to-copy notification (3.6).
+    search and address bars, email apps and webmail, the text before the cursor). Right before each paste or key
+    press goes out (after the clipboard holds the text, and again while a modifier key is held), the same window and
+    the same element must have the focus; otherwise nothing more is typed and the whole dictation goes to the
+    tap-to-copy notification (3.6). A password field found while typing refuses the dictation (nothing kept) only if
+    it's the dictation's own box, or in its window when the box couldn't be told apart; a password box elsewhere
+    detaches it like any other box.
   - Chromium (Chrome, Edge, Electron and WebView2 apps) builds its pages' accessibility tree only when an assistive
-    tool asks; until then the focus is just a pane, with nothing about the text box. So when a pane has the focus in
-    a window with Chromium pages, ThumbFree asks the way screen readers do (`ChromiumAccessibility.Wake`): the
-    "screen reader honeypot" (`WM_GETOBJECT` with object id 1) to a page window (`Chrome_RenderWidgetHostHWND`; Chrome
-    157 keeps them in a separate top-level window), plus one MSAA name read in the same app. That turns on basic page
-    accessibility for the whole app, which keeps it while it runs (a tab hidden for 5 minutes drops its tree until
-    it's shown again). If the text box hasn't appeared after 0.4 s, the window's elements are read as screen readers
-    do, and the focus is read again for up to 1.2 s in all. Nothing is cached, so a restarted app is asked again.
-    Measured on Chrome 157: the page's text boxes appear about 80 ms after either way. Without this, password fields
-    in a fresh Chrome weren't detected.
+    tool asks; until then the focus is just a pane, with nothing about the text box. So when a dictation starts and a
+    pane has the focus in a window with Chromium pages, ThumbFree asks the way screen readers do
+    (`ChromiumAccessibility.Wake`). It looks up the window's documents by control type and reads their names through
+    UI Automation, since Chromium turns on basic page accessibility for the whole app once a client reads such
+    properties of a page. It also sends the "screen reader honeypot" (`WM_GETOBJECT` with object id 1) to the page
+    windows (`Chrome_RenderWidgetHostHWND`) with an MSAA name read. Then the focus is read again for up to 1.2 s. The
+    app keeps page accessibility on while it runs (a tab hidden for 5 minutes drops its tree until it's shown again).
+    Nothing is cached, so a restarted app is asked again; the checks before each typed piece read the focus as it is.
+  - Chrome 157 keeps its page windows out of the browser window (in a separate or hidden top-level window), so UI
+    Automation reports the focus as the browser's pane even once the page is there. The focused page element is then
+    the deepest element with the keyboard focus under that pane, or else in the window (`FocusedInPage`), and its ARIA
+    properties are looked up by runtime id. If it can't be found, only the window is compared while typing.
+  - Measured on Chrome 157 (fresh profile, window in the background): reading the documents' properties brought the
+    page's text boxes within a second. The honeypot with a name read did once (in about 80 ms) and didn't another time,
+    when the only page window was parked in Chromium's hidden window. Without any of this, password fields in a fresh
+    Chrome weren't detected.
   - Recognition runs on one speech thread; a model loads when a dictation needs it (audio is kept meanwhile) and is
     unloaded after 3 idle minutes.
   - Silero (whisper.cpp's VAD) finds the pauses for Whisper and Parakeet: phrases end at 0.7 s, and long dictation is

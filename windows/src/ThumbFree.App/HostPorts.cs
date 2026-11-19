@@ -40,6 +40,25 @@ internal sealed class UiaFieldReader : IFieldReader
     public bool IsElevated(WindowInfo window) => Win32.IsProcessElevated(window.ProcessId) == true;
 }
 
+/// <summary>
+/// The desktop's typing with a last check right before the keys go out: after the clipboard holds the text and held
+/// modifier keys are let go (<see cref="WindowsDesktop"/>). Faked in tests.
+/// </summary>
+internal interface IGatedInput
+{
+    /// <summary>Types <paramref name="text"/>; <paramref name="beforeKeys"/> runs right before the keys, and stops them by throwing.</summary>
+    void TypeText(string text, Action beforeKeys);
+
+    /// <summary>Presses <paramref name="chord"/>; <paramref name="beforeKeys"/> runs right before, and stops it by throwing.</summary>
+    void PressKeys(string chord, Action beforeKeys);
+
+    /// <summary>Waits (a second at most) until Ctrl, Alt, Shift and the Windows keys are let go.</summary>
+    void WaitForModifiers();
+
+    /// <summary>Ctrl, Alt, Shift or a Windows key is held now.</summary>
+    bool ModifiersDown { get; }
+}
+
 /// <summary>One streaming dictation (<see cref="StreamingRecognizer.Session"/>); faked in tests.</summary>
 internal interface ILiveSession : IDisposable
 {

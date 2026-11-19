@@ -84,7 +84,7 @@ internal sealed class DictationHost : IDisposable
         _services = services;
         _post = post;
         _desktop = desktop;
-        _guarded = new GuardedDesktop(desktop, desktop is WindowsDesktop ? () => KeyboardInput.WaitForModifiersReleased() : () => { });
+        _guarded = new GuardedDesktop(desktop);
         _fields = fields;
         _audio = audio;
         _speech = new SpeechThread(models);
@@ -811,8 +811,9 @@ internal sealed class DictationHost : IDisposable
         d.Field = field;
 
         // Typing since the box was read (the end of the previous dictation, Alt+Shift+Z) changed the text before the
-        // cursor: read it again, now that this dictation's turn to type has come.
-        if (field is not null && d.Window is { } window && _guarded.Typed != d.TypedAtRead)
+        // cursor: read it again, now that this dictation's turn to type has come, if its window is still in front (the
+        // focus in another window is in another app's box).
+        if (field is not null && d.Window is { } window && _guarded.Typed != d.TypedAtRead && _desktop.GetForegroundWindow()?.Handle == window.Handle)
         {
             var again = await Task.Run(() => _fields.Read(window)).ConfigureAwait(false);
             if (again is not null && (field.ElementId is null || (again.ElementId is { } id && id.AsSpan().SequenceEqual(field.ElementId))))
@@ -847,7 +848,9 @@ internal sealed class DictationHost : IDisposable
     /// Types into the dictation's own text box only. The box is checked right before each paste or key press, after any
     /// held modifier keys are let go (<see cref="GuardedDesktop"/>): a different window or box detaches the dictation
     /// (PLAN 3.6). A password field that the read at the start missed (a Chromium page not ready yet, or UI Automation
-    /// too slow) refuses it, and then nothing of it is kept.
+    /// too slow) refuses it, and then nothing of it is kept; that's decided only when the password field is the
+    /// dictation's own box, or in its window when the box couldn't be told apart. A password box somewhere else (Tab to
+    /// a sign-in form's password, another window) detaches it like any other box, so it's kept to copy.
     /// </summary>
     private bool TypeIntoField(Dictation d, string text)
     {
@@ -857,6 +860,7 @@ internal sealed class DictationHost : IDisposable
         }
 
         _guarded.Guard = () => SameField(d);
+        _guarded.ResetCheck();
         try
         {
             if (_inserter.TypePrepared(text, d.Info))
@@ -1192,51 +1196,96 @@ internal sealed class DictationHost : IDisposable
     private sealed class FieldChangedException() : Exception("The text box lost the focus.");
 
     /// <summary>
-    /// The desktop the inserter types through. Right before each paste or key press it waits for held modifier keys to be
-    /// let go (WindowsDesktop would, after any check) and then runs <see cref="Guard"/>: Ctrl+Tab, Ctrl+L or Ctrl+F held
-    /// while a phrase is typed must not send it to the new tab or bar. It also counts what was typed and remembers the last
-    /// field check, so a refusal for a password field can be told apart.
+    /// The desktop the inserter types through. Right before each paste or key press goes out (after the clipboard holds
+    /// the text and held modifier keys are let go: <see cref="IGatedInput"/>) it runs <see cref="Guard"/>, again while a
+    /// modifier key is still held, up to 3 times: Ctrl+Tab, Ctrl+L or Ctrl+F held while a phrase is typed must not send
+    /// it to the new tab or bar. A password field found by the inserter's own check counts as the dictation's only if the
+    /// guard passes too, so moving to a password box somewhere else keeps the dictation to copy. It also counts what was
+    /// typed and remembers the last field check, so a refusal for a password field can be told apart.
     /// </summary>
-    private sealed class GuardedDesktop(IDesktop inner, Action waitForModifiers) : IDesktop
+    private sealed class GuardedDesktop(IDesktop inner) : IDesktop
     {
+        private const int MaxChecks = 3;
+
+        private readonly IGatedInput? _gated = inner as IGatedInput;
         private int _typed;
 
         /// <summary>True while the dictation's box has the focus; null types anywhere (Alt+Shift+Z). Queue only.</summary>
         public Func<bool>? Guard { get; set; }
 
+        /// <summary>The inserter's last field check since <see cref="ResetCheck"/>. Queue only.</summary>
         public FieldCheck LastCheck { get; private set; } = FieldCheck.Unknown;
 
         /// <summary>How many times text or keys went into an app.</summary>
         public int Typed => Volatile.Read(ref _typed);
 
+        public void ResetCheck() => LastCheck = FieldCheck.Unknown;
+
         public WindowInfo? GetForegroundWindow() => inner.GetForegroundWindow();
 
-        public FieldCheck CheckFocusedField() => LastCheck = inner.CheckFocusedField();
+        public FieldCheck CheckFocusedField()
+        {
+            var check = inner.CheckFocusedField();
+            if (check == FieldCheck.Password)
+            {
+                Check();
+            }
+
+            LastCheck = check;
+            return check;
+        }
 
         public bool? FocusedTextEndsWithNonWhitespace() => inner.FocusedTextEndsWithNonWhitespace();
 
         public void TypeText(string text)
         {
-            Check();
-            inner.TypeText(text);
+            if (_gated is not null)
+            {
+                _gated.TypeText(text, Check);
+            }
+            else
+            {
+                Check();
+                inner.TypeText(text);
+            }
+
             Interlocked.Increment(ref _typed);
         }
 
         public void PressKeys(string chord)
         {
-            Check();
-            inner.PressKeys(chord);
+            if (_gated is not null)
+            {
+                _gated.PressKeys(chord, Check);
+            }
+            else
+            {
+                Check();
+                inner.PressKeys(chord);
+            }
+
             Interlocked.Increment(ref _typed);
         }
 
         private void Check()
         {
-            if (Guard is { } guard)
+            if (Guard is not { } guard)
             {
-                waitForModifiers();
+                return;
+            }
+
+            for (var i = 0; i < MaxChecks; i++)
+            {
+                _gated?.WaitForModifiers();
                 if (!guard())
                 {
                     throw new FieldChangedException();
+                }
+
+                // A key pressed while the check ran (it can take 0.6 s) may have moved the focus since.
+                if (_gated?.ModifiersDown != true)
+                {
+                    return;
                 }
             }
         }

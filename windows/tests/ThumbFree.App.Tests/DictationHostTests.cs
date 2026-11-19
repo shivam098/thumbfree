@@ -90,6 +90,50 @@ public sealed class DictationHostTests : IDisposable
     }
 
     [Fact]
+    public async Task Moving_to_a_password_box_types_nothing_more_and_keeps_the_dictation_to_copy()
+    {
+        // Tab from a sign-in form's email box to its password box, or another window's: not this dictation's box.
+        _models.Session.Script = accepted => accepted < 5 ? (["Meet me at noon."], "then") : (["Meet me at noon.", "Bring the slides."], string.Empty);
+        _models.Session.Final = ["Meet me at noon.", "Bring the slides.", "Thanks"];
+
+        _host.BeginDictationCapture(1);
+        await _audio.SpeakAsync(seconds: 1.2);
+        await WaitForAsync(() => _desktop.Typed.Length > 0);
+        _fields.Same = false;
+        _desktop.Check = FieldCheck.Password;
+        _host.EndDictationCapture(cancel: false);
+        var outcome = await FinishedAsync();
+
+        Assert.Equal("Meet me at noon.", _desktop.Typed);
+        Assert.True(outcome.Kept);
+        Assert.Equal("Meet me at noon. Bring the slides. Thanks.", _services.Notifier!.UntypedText);
+        Assert.Single(_services.History.Entries());
+    }
+
+    [Fact]
+    public async Task A_refusal_for_a_password_field_doesnt_carry_over_to_the_next_dictation()
+    {
+        // A password field the first read missed: refused.
+        var box = _fields.Field;
+        _fields.Field = null;
+        _desktop.Check = FieldCheck.Password;
+        var refused = await _host.DictateAsync(["My secret words."], live: false).WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Then an ordinary box, but ThumbFree's own window (its tray menu) comes to the front before it's typed.
+        _desktop.Check = FieldCheck.Safe;
+        _fields.Reader = () =>
+        {
+            _desktop.Window = null;
+            return box;
+        };
+        var outcome = await _host.DictateAsync(["Hello there."], live: false).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("password field", refused.Problem);
+        Assert.True(outcome.Kept);
+        Assert.Equal("Hello there.", _services.Notifier!.UntypedText);
+    }
+
+    [Fact]
     public async Task A_password_field_stops_the_recording_and_keeps_nothing()
     {
         await _services.Settings.UpdateAsync(s => s.SaveSamples = true);
@@ -210,6 +254,40 @@ public sealed class DictationHostTests : IDisposable
     }
 
     [Fact]
+    public async Task The_text_box_is_checked_again_once_the_paste_is_ready()
+    {
+        // The focus moves while the clipboard is prepared, which can take seconds when it held Office content.
+        _desktop.WhilePreparing = () => _fields.Same = false;
+
+        var outcome = await _host.DictateAsync(["Hello there."], live: false).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(_desktop.Typed);
+        Assert.True(outcome.Kept);
+    }
+
+    [Fact]
+    public async Task A_key_held_while_the_box_is_checked_means_it_is_checked_again()
+    {
+        // Ctrl+Tab pressed while the check runs: once the keys are let go, the next check sees the new tab.
+        var held = 1;
+        _desktop.ModifierHeld = () =>
+        {
+            if (Interlocked.Exchange(ref held, 0) == 0)
+            {
+                return false;
+            }
+
+            _fields.Same = false;
+            return true;
+        };
+
+        var outcome = await _host.DictateAsync(["Hello there."], live: false).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(_desktop.Typed);
+        Assert.True(outcome.Kept);
+    }
+
+    [Fact]
     public async Task A_dictation_started_while_the_last_one_types_reads_its_box_again()
     {
         // The box's text as it is when read; typing lands late, as it does after Ctrl+Win while the keys are let go.
@@ -221,6 +299,37 @@ public sealed class DictationHostTests : IDisposable
         await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal("Hello there. How are you?", _desktop.Typed);
+    }
+
+    [Fact]
+    public async Task A_dictation_whose_window_was_left_before_its_turn_to_type_keeps_it_to_copy()
+    {
+        // Its box couldn't be told apart in its window (a Chromium page not ready yet), and the last dictation was still
+        // typing. By this one's turn the focus is in another window's password box, which isn't this dictation's.
+        var reads = 0;
+        var box = _fields.Field! with { ElementId = null };
+        _fields.Reader = () =>
+        {
+            Interlocked.Increment(ref reads);
+            return box;
+        };
+        _desktop.AfterTyping = () =>
+        {
+            _desktop.AfterTyping = null;
+            SpinWait.SpinUntil(() => Volatile.Read(ref reads) >= 2, TimeSpan.FromSeconds(5));
+            _desktop.Window = new WindowInfo(43, 8, "Bank", "Sign in");
+            _desktop.Check = FieldCheck.Password;
+            _fields.Same = false;
+            box = box with { Window = _desktop.Window, Password = true };
+        };
+
+        var first = _host.DictateAsync(["Hello there."], live: false);
+        var second = _host.DictateAsync(["how are you?"], live: false);
+        var outcomes = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("Hello there.", _desktop.Typed);
+        Assert.True(outcomes[1].Kept);
+        Assert.Null(outcomes[1].Problem);
     }
 
     [Fact]
@@ -331,7 +440,7 @@ public sealed class DictationHostTests : IDisposable
         return await _finished.Task;
     }
 
-    private sealed class FakeDesktop : IDesktop
+    private sealed class FakeDesktop : IDesktop, IGatedInput
     {
         private readonly StringBuilder _typed = new();
 
@@ -344,6 +453,15 @@ public sealed class DictationHostTests : IDisposable
 
         /// <summary>Runs during the inserter's field check.</summary>
         public Action? OnCheck { get; set; }
+
+        /// <summary>Runs while a paste is prepared, before the last check (as when the clipboard is slow to copy).</summary>
+        public Action? WhilePreparing { get; set; }
+
+        /// <summary>Runs once text has landed.</summary>
+        public Action? AfterTyping { get; set; }
+
+        /// <summary>Whether a modifier key is held right after a check (never, by default).</summary>
+        public Func<bool> ModifierHeld { get; set; } = () => false;
 
         /// <summary>How long a paste takes to land (as when Ctrl+Win is still being let go).</summary>
         public int TypeDelayMs { get; set; }
@@ -359,6 +477,8 @@ public sealed class DictationHostTests : IDisposable
             }
         }
 
+        public bool ModifiersDown => ModifierHeld();
+
         public WindowInfo? GetForegroundWindow() => Window;
 
         public FieldCheck CheckFocusedField()
@@ -369,13 +489,17 @@ public sealed class DictationHostTests : IDisposable
 
         public bool? FocusedTextEndsWithNonWhitespace() => null;
 
-        public void TypeText(string text)
+        public void TypeText(string text) => TypeText(text, () => { });
+
+        public void TypeText(string text, Action beforeKeys)
         {
             if (FailTyping)
             {
                 throw new InvalidOperationException("The clipboard is in use by another app.");
             }
 
+            WhilePreparing?.Invoke();
+            beforeKeys();
             if (TypeDelayMs > 0)
             {
                 Thread.Sleep(TypeDelayMs);
@@ -385,14 +509,24 @@ public sealed class DictationHostTests : IDisposable
             {
                 _typed.Append(text);
             }
+
+            AfterTyping?.Invoke();
         }
 
-        public void PressKeys(string chord)
+        public void PressKeys(string chord) => PressKeys(chord, () => { });
+
+        public void PressKeys(string chord, Action beforeKeys)
         {
+            WhilePreparing?.Invoke();
+            beforeKeys();
             lock (_typed)
             {
                 _typed.Append('\n');
             }
+        }
+
+        public void WaitForModifiers()
+        {
         }
     }
 
