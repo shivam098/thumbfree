@@ -7,8 +7,24 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      sherpa-onnx (Parakeet, Kroko streaming): the same version as android/app/build.gradle.kts. The managed package
+      depends on one org.k2fsa.sherpa.onnx.runtime.<rid> package per platform (sherpa-onnx-c-api.dll + onnxruntime.dll,
+      both with the C runtime linked in), so they don't need to be referenced here: a -r win-x64 / win-arm64 build copies
+      that platform's DLLs next to the exe, and a build without -r keeps them in runtimes\<rid>\native.
+    -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="2.0.1" />
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThumbFree.Core\ThumbFree.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ThumbFree.Speech.Tests" />
+    <InternalsVisibleTo Include="SpeechBench" />
   </ItemGroup>
 
 </Project>
