@@ -6,23 +6,31 @@
 <style>
   body { font: 15px system-ui, sans-serif; margin: 40px; background: #f6f8fa; }
   label { display: block; margin: 18px 0 6px; font-weight: 600; }
-  textarea, input { width: 560px; font: inherit; padding: 8px; }
-  textarea { height: 160px; }
+  textarea, input, .editor { width: 560px; font: inherit; padding: 8px; box-sizing: border-box; }
+  textarea { height: 140px; }
+  .editor { min-height: 120px; background: #fff; border: 1px solid #8c959f; white-space: pre-wrap; }
 </style>
 </head>
 <body>
 <h1>Dictation Lab</h1>
-<p>Test page for tests/DictationLab/run.ps1. Nothing here is sent anywhere.</p>
+<p>Test page for tests/DictationLab. Nothing here is sent anywhere. Tab moves between the boxes in this order.</p>
 <label for="message">Message</label>
 <textarea id="message" aria-label="Message" autofocus></textarea>
+<label for="subject">Subject</label>
+<input id="subject" aria-label="Subject">
+<label for="search">Search</label>
+<input id="search" type="search" aria-label="Search">
+<label for="body">Email body</label>
+<div id="body" class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Email body"></div>
 <label for="password">Password</label>
 <input id="password" type="password" aria-label="Password">
 <script>
-  // The test window is brought to the front by run.ps1; put the cursor in the message box whenever it gets focus.
-  const message = document.getElementById('message');
-  const focusMessage = () => { if (document.activeElement !== document.getElementById('password')) message.focus(); };
-  window.addEventListener('load', focusMessage);
-  window.addEventListener('focus', focusMessage);
+  // The lab runner brings the window to the front; the cursor starts in the message box. When the window gets focus
+  // back, the box that had it gets it again.
+  let last = document.getElementById('message');
+  document.addEventListener('focusin', e => { if (e.target instanceof HTMLElement && e.target !== document.body) last = e.target; });
+  window.addEventListener('load', () => last.focus());
+  window.addEventListener('focus', () => last.focus());
 </script>
 </body>
 </html>
