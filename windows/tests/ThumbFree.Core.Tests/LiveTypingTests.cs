@@ -372,19 +372,70 @@ public class LiveTypingTests
     }
 
     [Fact]
-    public void A_line_break_waits_for_the_words_after_it()
+    public void A_line_break_goes_out_with_the_words_after_it()
     {
-        // A spoken mark right after spoken line breaks takes them back ("…it, we left"), so text ending in one waits.
+        // A spoken mark right after spoken line breaks takes them back ("…it, we left"): the words are typed, the break waits.
         var d = new Dictation("", SingleLine);
         Assert.Equal("", d.Pause("We shipped it new line"));
-        Assert.Equal("", d.Pause("new line"));
-        Assert.Equal("We shipped it, we left", d.Finish("comma we left"));
+        Assert.Equal("We shipped it", d.Pause("new line"));
+        Assert.Equal(", we left", d.Finish("comma we left"));
+        Assert.Equal("We shipped it, we left", d.All);
+        Assert.False(d.Typing.FinishedWithoutLayout);
         Assert.Equal(d.All, AtTheEnd(d));
 
         var e = new Dictation("", MultiLine);
         Assert.Equal("", e.Pause("Dear team new line"));
         Assert.Equal("", e.Pause("the build is green."));
         Assert.Equal("Dear team\nThe build is green.", e.Pause("Thanks."));
+
+        // A comma kept only for the line break after it waits with the break: at the end of the text it's dropped.
+        var f = new Dictation("", MultiLine);
+        Assert.Equal("", f.Pause("kal office mein meeting hai"));
+        Assert.Equal("", f.Pause("comma"));
+        Assert.Equal("Kal office mein meeting hai", f.Pause("new line"));
+        Assert.Equal("", f.Pause("new line"));
+        Assert.Equal("", f.Finish("comma"));
+        Assert.Equal(f.All, AtTheEnd(f));
+        Assert.False(f.Typing.FinishedWithoutLayout);
+    }
+
+    [Fact]
+    public void Line_by_line_dictation_is_typed_live()
+    {
+        var list = new Dictation("", MultiLine);
+        Assert.Equal("", list.Pause("milk new line"));
+        Assert.Equal("Milk", list.Pause("eggs new line"));
+        Assert.Equal("\nEggs", list.Pause("bread new line"));
+        Assert.Equal("\nBread", list.Pause("butter new line"));
+        Assert.Equal("\nButter\nCheese", list.Finish("cheese"));
+        Assert.Equal(list.All, AtTheEnd(list));
+
+        var note = new Dictation("", MultiLine);
+        Assert.Equal("", note.Pause("Dear team, new line"));
+        Assert.Equal("Dear team", note.Pause("the build is green, new line"));
+        Assert.Equal("\nThe build is green", note.Pause("the release is on Friday, new line"));
+        Assert.Equal("\nThe release is on Friday\nPriya", note.Finish("Priya"));
+        Assert.Equal(note.All, AtTheEnd(note));
+
+        var box = new Dictation("", SingleLine);
+        Assert.Equal("", box.Pause("first item new line"));
+        Assert.Equal("First item", box.Pause("second item new line"));
+        Assert.Equal(" Second item", box.Pause("third item new line"));
+        Assert.Equal(" Third item Fourth item", box.Finish("fourth item"));
+        Assert.Equal(box.All, AtTheEnd(box));
+    }
+
+    [Fact]
+    public void A_held_line_break_comes_first_when_the_rest_is_typed_apart()
+    {
+        // Unpunctuated, so "scratch that" takes back typed lines (the documented limit); the rest still starts on its own line.
+        var d = new Dictation("", MultiLine);
+        d.Pause("milk new line");
+        Assert.Equal("Milk", d.Pause("eggs new line"));
+        Assert.Equal("\nEggs", d.Pause("bread new line"));
+        Assert.Equal("", d.Pause("scratch that"));
+        Assert.Equal("\nButter", d.Finish("butter"));
+        Assert.True(d.Typing.FinishedWithoutLayout);
     }
 
     [Fact]
@@ -516,17 +567,18 @@ public class LiveTypingTests
     }
 
     /// <summary>
-    /// Unpunctuated speech is typed while speaking, also after a filler comma ("Um, …") or one written mark: by the time
-    /// three phrases have finished, something is typed.
+    /// Unpunctuated speech is typed while speaking, also after a filler comma ("Um, …") or one written mark, and when it's
+    /// dictated line by line (every phrase ending in "new line"): by the time three phrases have finished, something is typed.
     /// </summary>
     [Fact]
     public void Unpunctuated_speech_is_typed_while_speaking()
     {
         var random = new Random(312);
         var formatter = new DictationFormatter();
-        for (var n = 0; n < 1500; n++)
+        for (var n = 0; n < 2000; n++)
         {
-            var phrases = Enumerable.Range(0, 4 + random.Next(4)).Select(_ => Pick(random, Unpunctuated)).ToArray();
+            var lineByLine = random.Next(3) == 0;
+            var phrases = Enumerable.Range(0, 4 + random.Next(4)).Select(_ => Pick(random, Unpunctuated) + (lineByLine ? " new line" : string.Empty)).ToArray();
             if (random.Next(3) == 1)
             {
                 phrases[0] = "Um, " + phrases[0];

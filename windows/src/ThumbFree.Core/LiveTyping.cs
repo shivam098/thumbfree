@@ -26,8 +26,8 @@ public readonly record struct LiveStep(string Type, string Pending);
 /// the end and with more words after it ("… actually 4 pm", "scratch that", a repeated phrase, a sign-off or a Hindi tag
 /// can still change them); not while a correction waits for its new value ("at 6, sorry,"); while the speech marks its
 /// clauses with written punctuation, only up to where a "scratch that" said next would stop (it drops the sentence or
-/// clause it follows), so a clause waits for the phrase after the one that ends it; and never ending in a space or line
-/// break, which what's said next can still take back ("new line" then "comma").
+/// clause it follows), so a clause waits for the phrase after the one that ends it; and with a space, line break or comma
+/// at the end of a piece held for the next one, since what's said next can still take it back ("new line" then "comma").
 /// A clause that runs on over two pauses without a mark, like speech without written punctuation (often Hindi + English),
 /// is typed one pause late as any phrase is, so there a "scratch that" said later can't take back typed text. While
 /// nothing is typed, a dictation that may become a list, or an email in an email field, is held and typed whole at the
@@ -45,6 +45,7 @@ public sealed partial class LiveTyping
     private readonly bool _holdAll;
     private bool _layoutHold;
     private bool _joinedWithSpace;
+    private string _heldBreak = string.Empty;
     private string[] _finished = [];
     private string[] _typedPhrases = [];
 
@@ -92,7 +93,8 @@ public sealed partial class LiveTyping
     /// <summary>The dictation as typed, without the space that joined it to the text before (for History and "paste last").</summary>
     public string Text => _joinedWithSpace ? Typed[1..] : Typed;
 
-    private string? Before => Typed.Length == 0 ? _textBefore : _textBefore + Typed;
+    /// <summary>The text before what's still to be typed, with a space, line break or comma held back from the last piece.</summary>
+    private string? Before => Typed.Length == 0 ? _textBefore : _textBefore + Typed + _heldBreak;
 
     /// <summary>
     /// The recognizer's progress: <paramref name="finishedPhrases"/>, the raw text of each phrase that ended at a pause (word
@@ -144,10 +146,11 @@ public sealed partial class LiveTyping
 
             // Typed text stays as it is; a list in the rest is still laid out, on lines of its own.
             var before = Before;
-            rest = Insertion.WithSpacing(before, Shape(LiveText.Join(allPhrases.Skip(TypedPhrases), string.Empty), layout: true, before));
+            rest = _heldBreak + Insertion.WithSpacing(before, Shape(LiveText.Join(allPhrases.Skip(TypedPhrases), string.Empty), layout: true, before));
         }
 
         Typed += rest;
+        _heldBreak = string.Empty;
         _typedPhrases = [.. allPhrases];
         return rest;
     }
@@ -199,14 +202,24 @@ public sealed partial class LiveTyping
         // "scratch that" in a longer one shortens it).
         for (var k = last; k > TypedPhrases && k > last - 3; k--)
         {
-            var candidate = Prepare(LiveText.Join(_finished.Take(k), string.Empty), layout: false, out var joined);
+            // A space, line break or comma at the end goes out with the next piece: what's said next can still take it back
+            // ("new line" then "comma"), and a comma that ends up last is dropped. The text without it is where the text
+            // with it begins, so it passes whatever that passes.
+            var full = Prepare(LiveText.Join(_finished.Take(k), string.Empty), layout: false, out var joined);
+            var end = full.Length;
+            while (end > 0 && (char.IsWhiteSpace(full[end - 1]) || full[end - 1] == ','))
+            {
+                end--;
+            }
+
+            var candidate = full[..end];
             if (candidate.Length > Typed.Length && candidate.StartsWith(Typed, StringComparison.Ordinal) && final.StartsWith(candidate, StringComparison.Ordinal)
-                && kept.StartsWith(candidate, StringComparison.Ordinal) && continued.StartsWith(candidate, StringComparison.Ordinal)
-                && !char.IsWhiteSpace(candidate[^1]))
+                && kept.StartsWith(candidate, StringComparison.Ordinal) && continued.StartsWith(candidate, StringComparison.Ordinal))
             {
                 var type = candidate[Typed.Length..];
                 _joinedWithSpace |= Typed.Length == 0 && joined;
                 Typed = candidate;
+                _heldBreak = full[candidate.Length..];
                 _typedPhrases = _finished[..k];
                 return type;
             }
