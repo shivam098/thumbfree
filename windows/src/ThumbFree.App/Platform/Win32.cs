@@ -7,6 +7,7 @@ internal static partial class Win32
 {
     public const int WM_HOTKEY = 0x0312;
     public const int SW_RESTORE = 9;
+    public const uint GA_PARENT = 1;
     public const uint GA_ROOT = 2;
     public const uint GW_OWNER = 4;
     public const int GWL_EXSTYLE = -20;
@@ -142,6 +143,11 @@ internal static partial class Win32
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(nint hWnd, StringBuilder text, int maxCount);
+
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
+    public static partial nint SendMessageTimeout(nint hWnd, uint msg, nint wParam, nint lParam, uint flags, uint timeoutMs, out nint result);
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static partial nint GetWindowLongPtr(nint hWnd, int index);

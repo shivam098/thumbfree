@@ -419,11 +419,16 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
     search and address bars, email apps and webmail, the text before the cursor). Before each piece is typed, the
     same window and the same element must have the focus; otherwise nothing more is typed and the whole dictation goes
     to the tap-to-copy notification (3.6).
-  - Chromium (Chrome, Edge, Electron and WebView2 apps) builds its pages' accessibility tree only after a UI
-    Automation client reads a property of the page itself; until then the focus is just the browser's pane. So the
-    first dictation into such an app reads one property of each page's root (`Chrome_RenderWidgetHostHWND`), then
-    waits up to 1.2 s for the real text box, once per app process. Without this, password fields in a fresh Chrome
-    weren't detected.
+  - Chromium (Chrome, Edge, Electron and WebView2 apps) builds its pages' accessibility tree only when an assistive
+    tool asks; until then the focus is just a pane, with nothing about the text box. So when a pane has the focus in
+    a window with Chromium pages, ThumbFree asks the way screen readers do (`ChromiumAccessibility.Wake`): the
+    "screen reader honeypot" (`WM_GETOBJECT` with object id 1) to a page window (`Chrome_RenderWidgetHostHWND`; Chrome
+    157 keeps them in a separate top-level window), plus one MSAA name read in the same app. That turns on basic page
+    accessibility for the whole app, which keeps it while it runs (a tab hidden for 5 minutes drops its tree until
+    it's shown again). If the text box hasn't appeared after 0.4 s, the window's elements are read as screen readers
+    do, and the focus is read again for up to 1.2 s in all. Nothing is cached, so a restarted app is asked again.
+    Measured on Chrome 157: the page's text boxes appear about 80 ms after either way. Without this, password fields
+    in a fresh Chrome weren't detected.
   - Recognition runs on one speech thread; a model loads when a dictation needs it (audio is kept meanwhile) and is
     unloaded after 3 idle minutes.
   - Silero (whisper.cpp's VAD) finds the pauses for Whisper and Parakeet: phrases end at 0.7 s, and long dictation is

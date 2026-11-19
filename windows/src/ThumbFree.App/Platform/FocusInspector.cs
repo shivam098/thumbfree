@@ -37,15 +37,6 @@ internal static class FocusInspector
     private const int EsMultiline = 0x0004;
     private const int GwlStyle = -16;
 
-    /// <summary>
-    /// The window Chromium keeps for each page's accessibility: Chrome, Edge and the other Chromium browsers, Electron
-    /// apps (VS Code, Slack, Discord) and WebView2 apps (the new Outlook, Teams).
-    /// </summary>
-    private const string ChromiumPageWindow = "Chrome_RenderWidgetHostHWND";
-
-    /// <summary>Apps whose pages were woken (<see cref="FocusedElement"/>), by process id.</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<uint, bool> WokenProcesses = new();
-
     private static readonly HashSet<string> EmailProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "OUTLOOK", "olk", "HxOutlook", "thunderbird", "Mailbird", "eM Client", "MailClient", "Spark",
@@ -88,11 +79,11 @@ internal static class FocusInspector
     }
 
     /// <summary>
-    /// The element with the keyboard focus. Chromium builds the accessibility tree of its pages only once a UI Automation
-    /// client reads a property of a page itself; until then, it reports the focus as a pane, with nothing about the text
-    /// box (password, lines, the text before the cursor). So when a pane has the focus in a window with Chromium pages,
-    /// each page's root is asked for its control type, which makes Chromium build the tree as it does for Narrator or
-    /// Voice Access, and the focus is read again for up to 1.2 s. Each app is woken once: its tree then stays on.
+    /// The element with the keyboard focus. A Chromium app whose pages' accessibility isn't on yet reports the focus as a
+    /// pane: it's asked the way screen readers ask (<see cref="ChromiumAccessibility.Wake"/>), and the focus is read again
+    /// for up to 1.2 s. If the page still isn't there after 0.4 s, the window's elements are read as screen readers do
+    /// (<see cref="ChromiumAccessibility.ReadElements"/>). Nothing is remembered: a pane that stays a pane (the focus
+    /// isn't in a text box) is asked again next time.
     /// </summary>
     /// <param name="window">The top-level window; the foreground one when 0.</param>
     public static AutomationElement? FocusedElement(nint window = 0)
@@ -104,31 +95,42 @@ internal static class FocusInspector
         }
 
         var root = window != 0 ? window : Win32.GetAncestor(Win32.GetForegroundWindow(), Win32.GA_ROOT);
-        Win32.GetWindowThreadProcessId(root, out var processId);
-        var pages = root == 0 || processId == 0 || WokenProcesses.ContainsKey(processId) ? [] : Win32.FindChildWindows(root, ChromiumPageWindow);
-        if (pages.Count == 0 || !WokenProcesses.TryAdd(processId, true))
+        if (root == 0 || !ChromiumAccessibility.Wake(root))
         {
             return focused;
         }
 
-        foreach (var page in pages)
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        var now = FocusedField(waited, untilMs: 400);
+        if (now is null)
         {
-            _ = TryGet(() => AutomationElement.FromHandle(page).Current.ControlType);
+            ChromiumAccessibility.ReadElements(root);
+            now = FocusedField(waited, untilMs: 1200);
         }
 
-        var waited = System.Diagnostics.Stopwatch.StartNew();
-        while (waited.ElapsedMilliseconds < 1200)
+        if (now is not null)
+        {
+            Log.Info($"web page accessibility on in {waited.ElapsedMilliseconds} ms");
+            return now;
+        }
+
+        Log.Info("the focus stayed on a pane in a Chromium window");
+        return Focused() ?? focused;
+    }
+
+    /// <summary>The focus once it's no longer a pane, read every 50 ms until <paramref name="untilMs"/>; null if it stays one.</summary>
+    private static AutomationElement? FocusedField(System.Diagnostics.Stopwatch waited, int untilMs)
+    {
+        while (waited.ElapsedMilliseconds < untilMs)
         {
             Thread.Sleep(50);
             if (Focused() is { } now && !IsPane(now))
             {
-                Log.Info($"web page accessibility woken in {waited.ElapsedMilliseconds} ms");
                 return now;
             }
         }
 
-        Log.Warn("web page accessibility didn't wake");
-        return Focused() ?? focused;
+        return null;
     }
 
     /// <summary>
@@ -185,7 +187,7 @@ internal static class FocusInspector
 
             // A pane in a Chromium window is a page whose accessibility tree isn't there yet: once it is, the focus is the
             // text box, a different element, so only the window is compared while typing.
-            var id = controlType == ControlType.Pane && Win32.FindChildWindows(window.Handle, ChromiumPageWindow).Count > 0 ? null : Id(element);
+            var id = controlType == ControlType.Pane && ChromiumAccessibility.PageWindows(window.Handle).Count > 0 ? null : Id(element);
             return new FocusedField(window, id, password, multiLine, search, email, privateWindow, before, caretKnown, kind);
         }
         catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)

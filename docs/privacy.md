@@ -49,7 +49,11 @@ The same rules apply on Windows, with these differences:
 - **The text box you dictate into:** when you start, ThumbFree uses Windows UI Automation to find out what kind of
   box it is and to read the text before the cursor. It reads whether the box is a password, search or multi-line box,
   and whether it's in an email app. It uses this for spacing, capital letters and email or list layout, and then types
-  into that same box. This information isn't stored, and nothing else on your screen is read.
+  into that same box. This information isn't stored.
+  - Chrome, Edge and apps built on them describe their text boxes only once their accessibility support is on.
+    ThumbFree asks them to turn it on, the way screen readers do. If that isn't enough, it reads the names of that
+    window's buttons and tabs once, which also turns it on, and discards them at once.
+  - Nothing else on your screen is read.
 - **History:** stored in `%LOCALAPPDATA%\ThumbFree\history.txt` on your PC. Nothing is kept from password fields or
   from browser windows that say they're private.
 - **"Help improve ThumbFree":** dictations are kept in `%LOCALAPPDATA%\ThumbFree\samples`. Nothing is kept from
