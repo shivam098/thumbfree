@@ -77,20 +77,21 @@ internal static class ChromiumAccessibility
             return false;
         }
 
+        // The honeypot reads nothing, so every page window of the app gets it (Chrome 157's are outside the window).
         foreach (var page in pages)
         {
             Win32.SendMessageTimeout(page, WmGetObject, 0, ScreenReaderHoneyPot, Win32.SMTO_ABORTIFHUNG, 250, out _);
         }
 
-        // The name is read in the app that owns the pages: the page windows themselves (WebView2's belong to its own
-        // browser process), and the window (Chrome and Electron apps).
-        foreach (var page in pages.Take(MaxPageNameReads))
+        // Names are read only in this window: its own page windows (WebView2's belong to its own browser process) and
+        // the window itself (Chrome and Electron apps), never other windows' pages, such as another or a private window.
+        foreach (var page in OwnPageWindows(root))
         {
             ReadName(page);
         }
 
         ReadName(root);
-        ReadPages(root, pages);
+        ReadPages(root);
         return true;
     }
 
@@ -98,17 +99,19 @@ internal static class ChromiumAccessibility
     /// The UI Automation part of <see cref="Wake"/>, again: the page's document appears only after Chromium has turned on
     /// its native accessibility, so a wait for the box repeats this once.
     /// </summary>
-    public static void ReadPagesAgain(nint root) => ReadPages(root, PageWindows(root));
+    public static void ReadPagesAgain(nint root) => ReadPages(root);
+
+    /// <summary>The page windows inside <paramref name="root"/> itself, at most <see cref="MaxPageNameReads"/>.</summary>
+    private static IEnumerable<nint> OwnPageWindows(nint root) => Win32.FindChildWindows(root, PageWindowClass).Take(MaxPageNameReads);
 
     /// <summary>
-    /// What screen readers ask first: the kind of each element and the documents' names, from the window and from each
-    /// page window's own root, whose child is the page's document (Chrome 157 doesn't always link its pages into the
-    /// window).
+    /// What screen readers ask first, in this window only: the kind of each element and the documents' names, from the
+    /// window and from its own page windows' roots, whose child is the page's document.
     /// </summary>
-    private static void ReadPages(nint root, List<nint> pages)
+    private static void ReadPages(nint root)
     {
         ReadDocuments(root, TreeScope.Descendants);
-        foreach (var page in pages.Take(MaxPageNameReads))
+        foreach (var page in OwnPageWindows(root))
         {
             ReadDocuments(page, TreeScope.Children);
         }

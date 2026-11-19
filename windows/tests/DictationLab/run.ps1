@@ -35,6 +35,8 @@ public static class LabWindow {
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   public static bool BringToFront(IntPtr h) {
@@ -51,7 +53,10 @@ public static class LabWindow {
   public static bool ClickBlankPage(IntPtr h) {
     RECT r; POINT before;
     if (GetForegroundWindow() != h || !GetWindowRect(h, out r) || !GetCursorPos(out before)) return false;
-    SetCursorPos(r.Right - 50, r.Top + (r.Bottom - r.Top) / 2);
+    var target = new POINT { X = r.Right - 50, Y = r.Top + (r.Bottom - r.Top) / 2 };
+    // Not if another window (a call's mini window, a picture-in-picture video) is on top there.
+    if (GetAncestor(WindowFromPoint(target), 2) != h) return false;
+    SetCursorPos(target.X, target.Y);
     mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
     SetCursorPos(before.X, before.Y);
     System.Threading.Thread.Sleep(300);
