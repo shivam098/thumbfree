@@ -159,7 +159,7 @@ public sealed class ModelStore
             download.Stopped.Task.Wait(TimeSpan.FromSeconds(5));
         }
 
-        var paths = spec.Files.Select(f => PathIn(PrimaryFolder, f)).ToList();
+        var paths = spec.Files.Select(f => PathIn(PrimaryFolder, f)).Where(p => !IsShared(p)).ToList();
         foreach (var path in paths)
         {
             DeleteFile(path);
@@ -167,8 +167,8 @@ public sealed class ModelStore
         }
 
         Forget(paths);
-        var folder = Path.GetDirectoryName(paths[0])!;
-        if (!SamePath(folder, PrimaryFolder))
+        var folder = Path.GetDirectoryName(PathIn(PrimaryFolder, spec.Files[0]))!;
+        if (!SamePath(folder, PrimaryFolder) && !IsShared(folder))
         {
             DeleteIfEmpty(folder);
         }
@@ -177,7 +177,7 @@ public sealed class ModelStore
     /// <summary>
     /// Deletes what this version doesn't use from the primary folder: files that aren't a current model file (or its
     /// partial download), such as the Whisper English models older versions used, then empty folders. Shared folders
-    /// belong to other apps and are never touched.
+    /// belong to other apps and are never touched, even one inside the primary folder.
     /// </summary>
     public void RemoveLeftovers()
     {
@@ -192,7 +192,7 @@ public sealed class ModelStore
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
         var removed = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(PrimaryFolder, "*", options).ToList())
+        foreach (var file in Directory.EnumerateFiles(PrimaryFolder, "*", options).Where(f => !IsShared(f)).ToList())
         {
             if (!keep.Contains(Path.GetRelativePath(PrimaryFolder, file).Replace('\\', '/')) && DeleteFile(file))
             {
@@ -200,7 +200,7 @@ public sealed class ModelStore
             }
         }
 
-        foreach (var folder in Directory.EnumerateDirectories(PrimaryFolder, "*", options).OrderByDescending(d => d.Length).ToList())
+        foreach (var folder in Directory.EnumerateDirectories(PrimaryFolder, "*", options).Where(f => !IsShared(f)).OrderByDescending(d => d.Length).ToList())
         {
             DeleteIfEmpty(folder);
         }
@@ -280,6 +280,10 @@ public sealed class ModelStore
 
     private string? FolderHolding(ModelSpec spec) => Folders.FirstOrDefault(folder => spec.Files.All(f => IsComplete(PathIn(folder, f), f)));
 
+    /// <summary>Whether <paramref name="path"/> is a shared folder or inside one.</summary>
+    private bool IsShared(string path) =>
+        SharedFolders.Any(f => SamePath(path, f) || path.StartsWith(Path.TrimEndingDirectorySeparator(f) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
     private async Task DownloadFilesAsync(string key, IReadOnlyList<ModelFile> files, IProgress<DownloadProgress>? progress, CancellationToken cancellationToken)
     {
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -333,7 +337,7 @@ public sealed class ModelStore
                     return;
                 }
 
-                if (SamePath(folder, PrimaryFolder))
+                if (SamePath(folder, PrimaryFolder) && !IsShared(existing))
                 {
                     // Damaged on disk: download it again.
                     DeleteFile(existing);

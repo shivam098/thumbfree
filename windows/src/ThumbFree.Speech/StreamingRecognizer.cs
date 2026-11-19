@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using SherpaOnnx;
 using ThumbFree.Core;
 
@@ -8,10 +9,15 @@ namespace ThumbFree.Speech;
 /// StreamingRecognizer): audio goes in as it's recorded and the text so far comes straight back. A phrase ends at a short
 /// pause; each finished phrase gets punctuation from a small model, keeping the recognizer's own words and capitals.
 /// </summary>
-public sealed class StreamingRecognizer : IRecognizer
+public sealed partial class StreamingRecognizer : IRecognizer
 {
     /// <summary>100 ms: how much audio <see cref="Transcribe"/> feeds at a time, as the app does while recording.</summary>
     public const int ChunkSamples = Decoding.SampleRate / 10;
+
+    /// <summary>Silence <see cref="Session.Finish"/> adds after the last words: at least 1 s, at most 3 s (see there).</summary>
+    private const int MinTailSamples = Decoding.SampleRate;
+
+    private const int MaxTailSamples = Decoding.SampleRate * 3;
 
     /// <summary>The marks <see cref="LiveText.MergePunctuation"/> takes from the punctuation model.</summary>
     private static readonly char[] Marks = ['.', ',', '?', '!', ';', ':'];
@@ -158,9 +164,12 @@ public sealed class StreamingRecognizer : IRecognizer
 
     /// <summary>
     /// Punctuation from the small model, merged into the recognizer's words and capitals (<see cref="LiveText.MergePunctuation"/>).
-    /// Best effort: the phrase is kept as recognized if anything goes wrong.
+    /// Kroko writes a few marks itself ("is it ready?", "push the build."). The model gets the bare words: given Kroko's
+    /// marks it repeats them, sometimes twice ("build..", "logs.,"), and adds stray commas ("build, logs."). Kroko's
+    /// marks are then put back where it wrote them, since the model hardly ever ends a phrase with one (a question would
+    /// lose its "?"), and each word keeps one mark. Best effort: the phrase is kept as recognized if anything goes wrong.
     /// </summary>
-    private string Punctuate(string text)
+    internal string Punctuate(string text)
     {
         if (_punctuation is null)
         {
@@ -169,16 +178,30 @@ public sealed class StreamingRecognizer : IRecognizer
 
         try
         {
-            // Kroko writes a few marks itself ("push the build."); the model would add its own after them ("build..").
-            // Only the model's marks are kept anyway, so it gets the bare words.
-            var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => w.TrimEnd(Marks)).Where(w => w.Length > 0);
-            return LiveText.MergePunctuation(text, _punctuation.AddPunct(string.Join(' ', words)));
+            var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var bare = words.Select(w => w.TrimEnd(Marks)).ToArray();
+            var model = bare.All(w => w.Length > 0)
+                ? _punctuation.AddPunct(string.Join(' ', bare)).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                : [];
+            if (model.Length != words.Length)
+            {
+                return text;
+            }
+
+            var marked = model.Select((w, i) => words[i].Length > bare[i].Length ? w.TrimEnd(Marks) + words[i][bare[i].Length] : w);
+            return LiveText.MergePunctuation(text, FirstMarks(string.Join(' ', marked)));
         }
         catch (Exception)
         {
             return text;
         }
     }
+
+    /// <summary>Reduces each run of marks at the end of a word to its first mark: "build.." → "build.", "Ready?." → "Ready?".</summary>
+    internal static string FirstMarks(string text) => MarkRunRegex().Replace(text, "$1");
+
+    [GeneratedRegex(@"([.,?!;:])[.,?!;:]+(?=\s|$)")]
+    private static partial Regex MarkRunRegex();
 
     /// <summary>
     /// One dictation. <see cref="Accept"/> and <see cref="Finish"/> run on the speech thread; the text properties can be
@@ -272,15 +295,32 @@ public sealed class StreamingRecognizer : IRecognizer
         /// Flushes the last words and returns every phrase of the dictation, punctuated and in order: the app types the ones
         /// it hasn't typed yet. The session can't be used afterwards; calling it again returns the same phrases.
         /// </summary>
+        /// <remarks>
+        /// sherpa-onnx only decodes whole windows (Kroko: 1.41 s of audio, moving on 1.28 s at a time), so the last words of
+        /// a dictation finished right after speaking wait for audio after them. Silence goes in 100 ms at a time until two
+        /// windows past the end are decoded, which covers every recorded frame, and at least 1 s of it, for models with
+        /// shorter windows. For Kroko that's 1.3–2.7 s of silence and two decodes (about 0.1 s); a fixed 1 s lost the last
+        /// words at a third of the alignments tested.
+        /// </remarks>
         public IReadOnlyList<string> Finish()
         {
             lock (_owner._gate)
             {
                 if (!_owner._closed && !_done)
                 {
-                    // A little silence lets the model emit the last word before the stream ends.
                     var recognizer = _owner._recognizer;
-                    _stream.AcceptWaveform(Decoding.SampleRate, new float[Decoding.SampleRate * 3 / 10]);
+                    var silence = new float[ChunkSamples];
+                    var decodes = 0;
+                    for (var tail = 0; (decodes < 2 || tail < MinTailSamples) && tail < MaxTailSamples; tail += silence.Length)
+                    {
+                        _stream.AcceptWaveform(Decoding.SampleRate, silence);
+                        while (recognizer.IsReady(_stream))
+                        {
+                            recognizer.Decode(_stream);
+                            decodes++;
+                        }
+                    }
+
                     _stream.InputFinished();
                     while (recognizer.IsReady(_stream))
                     {

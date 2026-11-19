@@ -37,7 +37,7 @@ and, in brackets, the RTF.
 
 | Model | Threads | Load | 1st call | send-logs (2.9 s) | genres (3.9 s) | dictation (10.5 s) | all three (17.3 s) |
 |---|---|---|---|---|---|---|---|
-| Kroko live (streaming) | 2 | 2106 ms | 3 ms | 66 ms (0.023) | 96 ms (0.025) | 252 ms (0.024) | 417 ms (0.024) |
+| Kroko live (streaming) | 2 | 1871 ms | 70 ms | 123 ms (0.042) | 123 ms (0.031) | 309 ms (0.030) | 455 ms (0.026) |
 | Parakeet TDT 110M | 2 | 776 ms | 23 ms | 51 ms (0.017) | 67 ms (0.017) | 185 ms (0.018) | 283 ms (0.016) |
 | Parakeet TDT 110M | 4 | 817 ms | 23 ms | 45 ms (0.016) | 56 ms (0.014) | 148 ms (0.014) | 250 ms (0.014) |
 | Parakeet TDT 110M | 6 | 755 ms | 25 ms | 49 ms (0.017) | 63 ms (0.016) | 151 ms (0.014) | 236 ms (0.014) |
@@ -59,11 +59,11 @@ Live typing (Kroko, 2 threads):
 
 | Clip | Decode per 100 ms chunk: mean / max | Finish | Word shown after it was spoken: median / p90 / max | Words matched |
 |---|---|---|---|---|
-| send-logs | 4.0 / 66.5 ms | 10 ms | 847 / 1407 / 1407 ms | 7 of 7 |
-| genres | 2.3 / 47.4 ms | 99 ms | 827 / 1402 / 1402 ms | 9 of 9 |
-| dictation | 4.2 / 73.1 ms | 17 ms | 1096 / 1647 / 1861 ms | 35 of 37 |
-| all three | 3.2 / 48.0 ms | 15 ms | 1002 / 1618 / 1739 ms | 50 of 52 |
-| **all clips** | | | **1013 / 1599 / 1861 ms** | 101 |
+| send-logs | 2.0 / 29.3 ms | 68 ms | 808 / 1389 / 1389 ms | 7 of 7 |
+| genres | 1.6 / 31.3 ms | 67 ms | 811 / 1391 / 1391 ms | 9 of 9 |
+| dictation | 2.5 / 36.9 ms | 65 ms | 1072 / 1630 / 1850 ms | 35 of 37 |
+| all three | 2.3 / 32.7 ms | 67 ms | 989 / 1609 / 1729 ms | 50 of 52 |
+| **all clips** | | | **989 / 1589 / 1850 ms** | 101 |
 
 The same build for x64, run under emulation on this PC (`dotnet publish -r win-x64`): Parakeet 110M RTF 0.039–0.052,
 Kroko 0.064–0.067, about 2.7 times slower than native ARM64.
@@ -75,7 +75,7 @@ Text (6 threads):
 | Kroko live (streaming) | send-logs | Please send me the latest build logs. |
 | Kroko live (streaming) | genres | I tested it on YouTube videos of different genres. |
 | Kroko live (streaming) | dictation | So um I wanted to check the pull request comma, and then I'm merge it into main full stop new line. After that, we can ask GitHub copilot to review the Kubernet's config and push the build. |
-| Kroko live (streaming) | all three | Please send me the latest build logs I, tested it on YouTube videos of different genres. So I wanted to check the pull request comma and then a merge it into main full stop new line. After that, we can ask GitHub copilot to review the Kubernets config and push the build. |
+| Kroko live (streaming) | all three | Please send me the latest build logs. I, tested it on YouTube videos of different genres. So I wanted to check the pull request comma and then a merge it into main full stop new line. After that, we can ask GitHub copilot to review the Kubernets config and push the build. |
 | Parakeet TDT 110M | send-logs | Please send me the latest build logs. |
 | Parakeet TDT 110M | genres | I tested it on YouTube videos of different genres. |
 | Parakeet TDT 110M | dictation | So um I wanted to check the pull request comma and then a merge it into main full stop new line after that we can ask GitHub CoPilot to review the Kubirnets config and push the build. |
@@ -100,12 +100,13 @@ stop", "new line", "um") clean it up afterwards.
   second, and is ready on the first call. 4 threads is as fast as 6; 8 is slower. 4 threads is a good default, which
   matches PLAN.md 3.1 ("at most 4 decoding threads").
 - **Parakeet 0.6B** needs about 0.6 s for the same 17.3 s and 1.5 s to load: fine for "types when you finish".
-- **Kroko** keeps up with ease (a 100 ms chunk takes 3–4 ms on average; the encoder runs once per ~1.3 s and then takes
-  50–70 ms), but words show about **1 s after they're spoken** (median; 1.6 s at p90, 1.9 s at worst). That's the
+- **Kroko** keeps up with ease (a 100 ms chunk takes 2–4 ms on average; the encoder runs once per ~1.3 s and then takes
+  30–70 ms), but words show about **1 s after they're spoken** (median; 1.6 s at p90, 1.9 s at worst). That's the
   model, not the integration: its encoder decodes 1.28 s chunks (`decode_chunk_len` 128 frames in the ONNX metadata),
-  so words arrive in bursts about every 1.3 s. A Kroko export with smaller chunks would show words sooner. Loading
-  takes about 2 s (onnxruntime setting up the 70 MB float encoder; the punctuation model takes 50 ms), so the app
-  should load it in the background at start.
+  so words arrive in bursts about every 1.3 s. A Kroko export with smaller chunks would show words sooner. For the same
+  reason, finishing a dictation adds silence until two windows past the end are decoded, so the last words aren't lost
+  (about 70 ms here). Loading takes about 2 s (onnxruntime setting up the 70 MB float encoder; the punctuation model
+  takes 50 ms), so the app should load it in the background at start.
 - **Whisper** costs the same for any piece up to 14 s (the encoder always runs the 768-frame window): about 0.2–0.3 s
   per piece for Swift and 2–3 s for Apex at 6–8 threads. Whisper benefits from more threads than Parakeet.
 - An **x64 build is 2.7 times slower** on an ARM64 PC: Snapdragon users should get the `win-arm64` zip.

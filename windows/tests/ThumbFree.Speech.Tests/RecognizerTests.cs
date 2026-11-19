@@ -82,6 +82,10 @@ public sealed class RecognizerTests(ITestOutputHelper output)
         model.Resume();
         Assert.Contains("build", model.Transcribe(Audio.Read("send-logs.wav"), preview: true), StringComparison.OrdinalIgnoreCase);
 
+        // 31 s of speech takes a few hundred ms: aborted while it runs, the result is thrown away.
+        AbortDuringACall(model, [.. Audio.Read("dictation.wav"), .. Audio.Read("dictation.wav"), .. Audio.Read("dictation.wav")]);
+        Assert.Contains("build", model.Transcribe(Audio.Read("send-logs.wav"), preview: false), StringComparison.OrdinalIgnoreCase);
+
         model.Dispose();
         Assert.Null(model.Transcribe(Audio.Read("send-logs.wav"), preview: false));
     }
@@ -143,7 +147,76 @@ public sealed class RecognizerTests(ITestOutputHelper output)
         Assert.Null(model.Transcribe(audio, preview: false));
         model.Resume();
         Assert.Equal(string.Empty, model.Transcribe(new float[Decoding.SampleRate], preview: false));
+
+        // Aborted while it runs, the transcription stops at the next 100 ms.
+        AbortDuringACall(model, [.. audio, .. audio, .. audio]);
     }
+
+    [ModelFact("en-kroko-live")]
+    public void Kroko_keeps_the_last_words_when_you_finish_right_after_speaking()
+    {
+        using var model = StreamingRecognizer.Load(TestModels.Store.DirectoryOf(ModelCatalog.EnglishLive), TestModels.Threads);
+        foreach (var (clip, lastWords) in new[] { ("send-logs.wav", "latest build logs"), ("genres.wav", "different genres"), ("dictation.wav", "push the build") })
+        {
+            // The clips end with about 0.75 s of silence: cutting 0.7 s is a tap to finish right after the last word. Silence
+            // in front moves that end to other places in Kroko's 1.28 s windows, where different amounts of tail are needed.
+            var speech = Audio.Read(clip)[..^(Decoding.SampleRate * 7 / 10)];
+            foreach (var lead in new[] { 0, 400, 800 })
+            {
+                float[] audio = [.. new float[Decoding.SampleRate * lead / 1000], .. speech];
+                using var session = model.StartSession();
+                foreach (var chunk in Audio.Chunks(audio))
+                {
+                    session.Accept(chunk);
+                }
+
+                var live = session.FinishText();
+                var whole = model.Transcribe(audio, preview: false);
+                output.WriteLine($"{clip} after {lead} ms: {live}");
+                Assert.True(live.Contains(lastWords, StringComparison.OrdinalIgnoreCase), $"{clip} after {lead} ms, session: {live}");
+                Assert.True(whole?.Contains(lastWords, StringComparison.OrdinalIgnoreCase), $"{clip} after {lead} ms, Transcribe: {whole}");
+            }
+        }
+    }
+
+    [ModelFact("en-kroko-live")]
+    public void Kroko_keeps_its_own_marks_without_doubling_them()
+    {
+        using var model = StreamingRecognizer.Load(TestModels.Store.DirectoryOf(ModelCatalog.EnglishLive), TestModels.Threads);
+
+        // Phrases as Kroko writes them (its vocabulary has . , ? ! : ; and ...). The punctuation model hardly ever ends a
+        // phrase with a mark itself; given Kroko's marks, it repeats them, sometimes twice ("build..", "logs.,"), and adds
+        // stray commas ("build, logs.").
+        var question = model.Punctuate("is it ready?");
+        var dictation = model.Punctuate("so um I wanted to check the pull request comma and then I'm merge it into main full stop new line after that we can ask GitHub copilot to review the Kubernet's config and push the build.");
+        var logs = model.Punctuate("Please send me the latest build logs.");
+        output.WriteLine($"{question} | {dictation} | {logs}");
+        Assert.Equal("Is it ready?", question);
+        Assert.EndsWith("push the build.", dictation, StringComparison.Ordinal);
+        Assert.Contains("send me the latest build logs.", logs, StringComparison.Ordinal);
+
+        // On speech: the three clips back to back, where Kroko writes "logs." and "genres." in the middle of a phrase.
+        float[] audio = [.. Audio.Read("send-logs.wav"), .. Audio.Read("genres.wav"), .. Audio.Read("dictation.wav")];
+        using var session = model.StartSession();
+        foreach (var chunk in Audio.Chunks(audio))
+        {
+            session.Accept(chunk);
+        }
+
+        var phrases = session.Finish();
+        output.WriteLine(string.Join(" | ", phrases));
+        Assert.All(phrases.Append(question).Append(dictation).Append(logs), text => Assert.DoesNotMatch("[.,?!;:]{2}", text));
+    }
+
+    [Theory]
+    [InlineData("push the Build..", "push the Build.")]
+    [InlineData("I saw it yesterday., then", "I saw it yesterday. then")]
+    [InlineData("Is it Ready?.", "Is it Ready?")]
+    [InlineData("wait... what?!", "wait. what?")]
+    [InlineData("e.g. the U.S., then", "e.g. the U.S. then")]
+    [InlineData("Hi, all. Done?", "Hi, all. Done?")]
+    public void Each_word_keeps_its_first_mark(string text, string expected) =>
+        Assert.Equal(expected, StreamingRecognizer.FirstMarks(text));
 
     [ModelFact("en-kroko-live")]
     public void Kroko_finishes_a_phrase_at_each_pause_while_you_speak()
@@ -204,6 +277,32 @@ public sealed class RecognizerTests(ITestOutputHelper output)
         Assert.Null(model.Transcribe(Audio.Read("send-logs.wav"), preview: false));
         model.Resume();
         Assert.Contains("logs", model.Transcribe(Audio.Read("send-logs.wav"), preview: true), StringComparison.OrdinalIgnoreCase);
+
+        // Whisper.net can't stop mid-run: the result is thrown away.
+        AbortDuringACall(model, Audio.Read("dictation.wav"));
+        Assert.Contains("logs", model.Transcribe(Audio.Read("send-logs.wav"), preview: false), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Starts a transcription on another thread and aborts it 50 ms in (it takes several times that): the call returns
+    /// null, and the recognizer works again after <see cref="IRecognizer.Resume"/>.
+    /// </summary>
+    private static void AbortDuringACall(IRecognizer model, float[] audio)
+    {
+        string? result = "not run";
+        using var started = new ManualResetEventSlim();
+        var call = new Thread(() =>
+        {
+            started.Set();
+            result = model.Transcribe(audio, preview: false);
+        });
+        call.Start();
+        started.Wait();
+        Thread.Sleep(50);
+        model.Abort();
+        call.Join();
+        model.Resume();
+        Assert.Null(result);
     }
 
     private static string Format(string raw) => new DictationFormatter().Format(Vocabulary.Correct(TranscriptText.Clean(raw), Words));

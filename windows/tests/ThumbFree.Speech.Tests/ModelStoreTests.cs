@@ -196,19 +196,23 @@ public sealed class ModelStoreTests : IDisposable
     {
         var bytes = Bytes(16);
         var spec = Spec(Serve("ggml-shared.bin", bytes));
-        var shared = _scratch.File("voice-assistant");
-        Directory.CreateDirectory(shared);
-        File.WriteAllBytes(Path.Combine(shared, "ggml-shared.bin"), bytes);
-        var store = Store(shared);
+
+        // One shared folder inside the models folder, where a cleanup could reach it, and one next to it.
+        var inside = SharedFolder("models/voice-assistant", ("ggml-shared.bin", bytes));
+        var alongside = SharedFolder("voice-dictation", ("ggml-shared.bin", bytes));
+        var before = Snapshot(inside, alongside);
+        var store = Store([inside, alongside]);
 
         Assert.True(store.IsInstalled(spec));
-        Assert.Equal(Path.Combine(shared, "ggml-shared.bin"), store.PathOf(spec.Files[0]));
-        Assert.Equal(shared, store.DirectoryOf(spec));
+        Assert.Equal(Path.Combine(inside, "ggml-shared.bin"), store.PathOf(spec.Files[0]));
+        Assert.Equal(inside, store.DirectoryOf(spec));
         await store.DownloadAsync(spec);
+        store.RemoveLeftovers();
         store.Delete(spec);
 
         Assert.Empty(_server.Requests);
-        Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(shared, "ggml-shared.bin")));
+        Assert.True(store.IsInstalled(spec));
+        Assert.Equal(before, Snapshot(inside, alongside));
     }
 
     [Fact]
@@ -216,16 +220,14 @@ public sealed class ModelStoreTests : IDisposable
     {
         var bytes = Bytes(17);
         var spec = Spec(Serve("ggml-shared.bin", bytes));
-        var shared = _scratch.File("voice-assistant");
-        Directory.CreateDirectory(shared);
-        var damaged = Bytes(18);
-        File.WriteAllBytes(Path.Combine(shared, "ggml-shared.bin"), damaged);
-        var store = Store(shared);
+        var shared = SharedFolder("voice-assistant", ("ggml-shared.bin", Bytes(18)));
+        var before = Snapshot(shared);
+        var store = Store([shared]);
 
         await store.DownloadAsync(spec);
 
         Assert.Equal(_scratch.File("models/ggml-shared.bin"), store.PathOf(spec.Files[0]));
-        Assert.Equal(damaged, File.ReadAllBytes(Path.Combine(shared, "ggml-shared.bin")));
+        Assert.Equal(before, Snapshot(shared));
     }
 
     [Fact]
@@ -261,21 +263,24 @@ public sealed class ModelStoreTests : IDisposable
             ModelStore.IndexFileName,
         ];
         string[] leftovers = ["ggml-small.en-q8_0.bin", "ggml-small.en-q8_0.bin.partial", "parakeet-tdt-110m/old.onnx", "old-model/encoder.onnx"];
-        foreach (var path in keep.Concat(leftovers).Append("../shared/ggml-small.en-q8_0.bin"))
+        foreach (var path in keep.Concat(leftovers))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_scratch.File("models/" + path))!);
             File.WriteAllText(_scratch.File("models/" + path), "x");
         }
 
         Directory.CreateDirectory(_scratch.File("models/empty/inner"));
+        var inside = SharedFolder("models/voice-assistant");
+        var alongside = SharedFolder("voice-dictation");
+        var before = Snapshot(inside, alongside);
 
-        Store(_scratch.File("shared")).RemoveLeftovers();
+        Store([inside, alongside]).RemoveLeftovers();
 
         Assert.All(keep, path => Assert.True(File.Exists(_scratch.File("models/" + path)), path));
         Assert.All(leftovers, path => Assert.False(File.Exists(_scratch.File("models/" + path)), path));
         Assert.False(Directory.Exists(_scratch.File("models/old-model")));
         Assert.False(Directory.Exists(_scratch.File("models/empty")));
-        Assert.True(File.Exists(_scratch.File("shared/ggml-small.en-q8_0.bin")));
+        Assert.Equal(before, Snapshot(inside, alongside));
     }
 
     private static byte[] Bytes(int seed, int length = 300_000)
@@ -289,6 +294,16 @@ public sealed class ModelStoreTests : IDisposable
 
     private static long ResumedAt(string request) => long.Parse(Regex.Match(request, @"bytes=(\d+)-$").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
 
+    /// <summary>Every file and folder under <paramref name="folders"/>, with its content hash and last-write time.</summary>
+    private static List<string> Snapshot(params string[] folders) =>
+        folders
+            .SelectMany(f => Directory.EnumerateFileSystemEntries(f, "*", SearchOption.AllDirectories).Append(f))
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .Select(p => File.Exists(p)
+                ? $"{p} {Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(p)))} {File.GetLastWriteTimeUtc(p).Ticks}"
+                : $"{p} folder {Directory.GetLastWriteTimeUtc(p).Ticks}")
+            .ToList();
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (var i = 0; i < 500 && !condition(); i++)
@@ -299,6 +314,30 @@ public sealed class ModelStoreTests : IDisposable
         Assert.True(condition(), "timed out waiting");
     }
 
+    /// <summary>
+    /// Another app's models folder: <paramref name="files"/>, an old model and a partial download ThumbFree doesn't use,
+    /// an empty folder, all dated a year ago (so any write shows).
+    /// </summary>
+    private string SharedFolder(string relative, params (string Name, byte[] Bytes)[] files)
+    {
+        var folder = _scratch.File(relative);
+        Directory.CreateDirectory(Path.Combine(folder, "old"));
+        foreach (var (name, bytes) in files.Append(("ggml-small.en-q8_0.bin", Bytes(98, 1_000))).Append(("ggml-small.en-q8_0.bin.partial", Bytes(99, 500))))
+        {
+            File.WriteAllBytes(Path.Combine(folder, name), bytes);
+        }
+
+        var yearAgo = DateTime.UtcNow.AddYears(-1);
+        foreach (var file in Directory.EnumerateFiles(folder))
+        {
+            File.SetLastWriteTimeUtc(file, yearAgo);
+        }
+
+        Directory.SetLastWriteTimeUtc(Path.Combine(folder, "old"), yearAgo);
+        Directory.SetLastWriteTimeUtc(folder, yearAgo);
+        return folder;
+    }
+
     private ModelFile Serve(string path, byte[] bytes, byte[]? pinned = null)
     {
         var url = _server.Add(path.Replace('/', '_'), bytes);
@@ -306,8 +345,8 @@ public sealed class ModelStoreTests : IDisposable
         return new ModelFile(path, url, Convert.ToHexStringLower(SHA256.HashData(expected)), expected.Length);
     }
 
-    private ModelStore Store(string? shared = null, TimeSpan? readTimeout = null) =>
-        new(_scratch.File("models"), shared is null ? null : [shared], Http)
+    private ModelStore Store(IReadOnlyList<string>? shared = null, TimeSpan? readTimeout = null) =>
+        new(_scratch.File("models"), shared, Http)
         {
             RetryDelay = TimeSpan.FromMilliseconds(10),
             ReadTimeout = readTimeout ?? TimeSpan.FromSeconds(10),
