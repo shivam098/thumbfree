@@ -230,8 +230,9 @@ class StreamingOnDeviceTest {
     }
 
     /**
-     * Kroko emits a word only after hearing a little audio past it. Tapping to finish right after the last word must
-     * not lose it: the clips end with about 0.8 s of silence, so cutting 0.7 s ends them right after the speech.
+     * Kroko emits a word only after hearing audio past it, and sherpa-onnx decodes whole windows, so how much silence the
+     * last words need depends on where the audio ends. The clips end with about 0.75 s of silence: cutting 0.7 s is a tap
+     * to finish right after the last word, and silence in front moves that end to other places in the windows.
      */
     @Test
     fun keeps_the_last_words_when_you_stop_right_after_speaking() {
@@ -239,18 +240,40 @@ class StreamingOnDeviceTest {
         StreamingRecognizer.load(dir, threads).use { model ->
             for ((clip, last) in listOf("send-logs.wav" to "latest build logs", "genres.wav" to "different genres", "dictation.wav" to "push the build")) {
                 val full = wav(clip)
-                val audio = full.copyOf(full.size - 11_200)
-                val session = model.session()
-                var i = 0
-                while (i < audio.size) {
-                    val end = minOf(audio.size, i + 1_600)
-                    session.accept(audio.copyOfRange(i, end))
-                    i = end
+                val speech = full.copyOf(full.size - 11_200)
+                for (lead in listOf(0, 400, 800)) {
+                    val audio = FloatArray(16 * lead) + speech
+                    val session = model.session()
+                    var i = 0
+                    while (i < audio.size) {
+                        val end = minOf(audio.size, i + 1_600)
+                        session.accept(audio.copyOfRange(i, end))
+                        i = end
+                    }
+                    val text = session.finish()
+                    val whole = model.transcribe(audio, preview = false)
+                    println("ThumbFree kroko cut $clip after $lead ms: $text")
+                    assertTrue("$clip after $lead ms keeps \"$last\": $text", text.contains(last, ignoreCase = true))
+                    assertTrue("$clip after $lead ms, whole recording keeps \"$last\": $whole", whole?.contains(last, ignoreCase = true) == true)
                 }
-                val text = session.finish()
-                println("ThumbFree kroko cut $clip: $text")
-                assertTrue("$clip keeps \"$last\": $text", text.contains(last, ignoreCase = true))
             }
+        }
+    }
+
+    /**
+     * Kroko writes a few marks itself (". , ? ! : ;"). The punctuation model hardly ever ends a phrase with one, and given
+     * Kroko's marks it repeats them ("build..") or adds stray commas ("build, logs.").
+     */
+    @Test
+    fun keeps_krokos_own_marks_without_doubling_them() {
+        assumeTrue("no model at $dir", File(dir, "punct.int8.onnx").canRead())
+        StreamingRecognizer.load(dir, threads).use { model ->
+            val question = model.punctuate("is it ready?")
+            val logs = model.punctuate("Please send me the latest build logs.")
+            println("ThumbFree kroko marks: $question | $logs")
+            assertEquals("Is it ready?", question)
+            assertTrue(logs, logs.contains("send me the latest build logs."))
+            assertFalse("no doubled marks: $logs", Regex("[.,?!;:]{2}").containsMatchIn(logs))
         }
     }
 
