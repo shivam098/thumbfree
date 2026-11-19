@@ -29,7 +29,8 @@ namespace ThumbFree.App;
 ///   expecttitle: &lt;text&gt;      PASS/FAIL: does the foreground window title contain the phrase (title not written)
 ///   expectfocus: &lt;name&gt;      PASS/FAIL: does the focused control's accessible name contain the phrase
 ///   insert Paste|Type        switch the insertion method
-///   stoponfail               stop the script at the first FAIL (use before steps that type)
+///   stoponfail               stop the script at the first failed title or focus check (the test window or box isn't
+///                            in front); after a passing expecttitle, nothing is typed unless that window is in front
 ///   clipboard                record a fingerprint (formats, hash, length) of the clipboard, not its text
 ///   # comment
 /// The output never contains text from your windows, titles or clipboard: only the script's own text, what the test
@@ -72,6 +73,8 @@ internal static class SelfTest
         try
         {
             var stopOnFail = false;
+            var stop = false;
+            nint labWindow = 0;
             var dictations = 0;
             host.Start();
             foreach (var raw in await File.ReadAllLinesAsync(scriptPath).ConfigureAwait(false))
@@ -83,10 +86,16 @@ internal static class SelfTest
                 }
 
                 output.AppendLine($"> {line}");
-                if (stopOnFail && output.ToString().Contains("   FAIL:", StringComparison.Ordinal))
+                if (stop)
                 {
-                    // A failed check means the expected window/box isn't in front: typing on could go somewhere else.
+                    // The expected window or box isn't in front: typing on could go somewhere else.
                     output.AppendLine("!! stopped after a failed check");
+                    break;
+                }
+
+                if (labWindow != 0 && TypesOrPresses(line) && new WindowsDesktop().GetForegroundWindow()?.Handle != labWindow)
+                {
+                    output.AppendLine("!! the test window isn't in front any more; stopped before typing");
                     break;
                 }
 
@@ -174,19 +183,30 @@ internal static class SelfTest
                 }
                 else if (line.StartsWith("expectfocus:", StringComparison.Ordinal))
                 {
-                    // PASS/FAIL: is the focused control the one with this accessible name (a label from the test page).
+                    // PASS/FAIL: is the focused control the one with this accessible name (a label from the test page). Chrome
+                    // builds its accessibility tree on the first query, so this waits up to 3 s for it.
                     var expected = line[12..].Trim();
                     var name = FocusedName();
+                    for (var tries = 0; tries < 12 && !name.Contains(expected, StringComparison.OrdinalIgnoreCase); tries++)
+                    {
+                        await Task.Delay(250).ConfigureAwait(false);
+                        name = FocusedName();
+                    }
+
                     var pass = name.Contains(expected, StringComparison.OrdinalIgnoreCase);
-                    output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: focused control {(pass ? "has" : "does not have")} the expected name");
+                    output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: focused control {(pass ? "has" : "does not have")} the expected name{(pass ? string.Empty : $" (focused: {ReadFocusedText().Type})")}");
+                    stop |= stopOnFail && !pass;
                 }
                 else if (line.StartsWith("expecttitle:", StringComparison.Ordinal))
                 {
-                    // PASS/FAIL only: the title itself is never written.
+                    // PASS/FAIL only: the title itself is never written. From here on, nothing is typed unless this window
+                    // is still in front.
                     var expected = line[12..].Trim();
-                    var title = new WindowsDesktop().GetForegroundWindow()?.Title ?? string.Empty;
-                    var pass = title.Contains(expected, StringComparison.OrdinalIgnoreCase);
+                    var foreground = new WindowsDesktop().GetForegroundWindow();
+                    var pass = (foreground?.Title ?? string.Empty).Contains(expected, StringComparison.OrdinalIgnoreCase);
                     output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: foreground title {(pass ? "contains" : "does not contain")} the expected phrase");
+                    stop |= stopOnFail && !pass;
+                    labWindow = pass ? foreground!.Handle : labWindow;
                 }
                 else if (line.StartsWith("keys:", StringComparison.Ordinal))
                 {
@@ -273,6 +293,11 @@ internal static class SelfTest
 
     private static void Describe(StringBuilder output, DictationOutcome outcome) =>
         output.AppendLine($"   {(outcome.TypedAll ? "typed" : outcome.Kept ? "kept for copying" : "not typed: " + outcome.Problem)} (len={outcome.Text.Length})");
+
+    /// <summary>Script lines that type or press keys: they run only while the test window is in front.</summary>
+    private static bool TypesOrPresses(string line) =>
+        line == "again" || line.StartsWith("keys:", StringComparison.Ordinal) || line.StartsWith("ptt:", StringComparison.Ordinal)
+        || line.StartsWith("live:", StringComparison.Ordinal) || line.StartsWith("wav:", StringComparison.Ordinal);
 
     /// <summary>Selects <paramref name="spec"/> the way Settings would: its language, and its tier for that language.</summary>
     private static void Choose(AppSettings settings, ModelSpec spec)
