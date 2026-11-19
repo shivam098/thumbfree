@@ -305,8 +305,9 @@ internal static class FocusInspector
     private static bool IsPane(AutomationElement element) => TryGet(() => element.Current.ControlType) == ControlType.Pane;
 
     /// <summary>
-    /// A pane, or a Chromium page's document: the focus as a Chromium app reports it before its page's accessibility is
-    /// on (or while the focus isn't in a box).
+    /// A pane, or a Chromium page's document that can't be typed into: the focus as a Chromium app reports it before
+    /// its page's accessibility is on (or while the focus isn't in a box). An editable document (designMode in a frame,
+    /// as in TinyMCE or CKEditor 4) is the box itself.
     /// </summary>
     private static bool IsUnresolved(AutomationElement element)
     {
@@ -315,7 +316,20 @@ internal static class FocusInspector
             return false;
         }
 
-        return type == ControlType.Pane || (type == ControlType.Document && TryGet(() => element.Current.FrameworkId) == "Chrome");
+        return type == ControlType.Pane ||
+            (type == ControlType.Document && TryGet(() => element.Current.FrameworkId) == "Chrome" && !IsEditable(element));
+    }
+
+    private static bool IsEditable(AutomationElement element)
+    {
+        try
+        {
+            return element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && !((ValuePattern)pattern).Current.IsReadOnly;
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or TimeoutException or System.Runtime.InteropServices.COMException)
+        {
+            return false;
+        }
     }
 
     private static T? TryGet<T>(Func<T> read)

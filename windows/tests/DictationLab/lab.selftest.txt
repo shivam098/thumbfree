@@ -63,3 +63,9 @@ ptt: secret words
 expectstatus: password field
 expectnot: secret words
 clipboard
+# An editor whose whole page is editable (designMode in a frame, as in TinyMCE or CKEditor 4): that page is the box.
+keys: Tab
+expectfocus: Notes
+field
+ptt: Notes from the meeting full stop
+expect: Notes from the meeting.
