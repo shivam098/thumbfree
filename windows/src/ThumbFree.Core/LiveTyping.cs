@@ -24,12 +24,14 @@ public readonly record struct LiveStep(string Type, string Pending);
 /// app can't be taken back (Backspace could destroy the person's own text), so only final text is typed: the finished
 /// phrases before the last one, once the text with all of them still begins with them, both laid out as it would be at
 /// the end and with more words after it ("… actually 4 pm", "scratch that", a repeated phrase, a sign-off or a Hindi tag
-/// can still change them); not while a correction waits for its new value ("at 6, sorry,"); in text with written
-/// punctuation, only up to where a "scratch that" said next would stop (it drops the sentence or clause it follows); and
-/// never just spaces or line breaks. Without written punctuation (often Hindi + English) there's no such boundary, so
-/// there a "scratch that" two phrases later can't take back typed text. While nothing is typed, a dictation that may
-/// become a list, or an email in an email field, is held and typed whole at the end. One with nothing typed live ends
-/// exactly like a dictation typed at the end. Pure logic: the app does the typing.
+/// can still change them); not while a correction waits for its new value ("at 6, sorry,"); while the speech marks its
+/// clauses with written punctuation, only up to where a "scratch that" said next would stop (it drops the sentence or
+/// clause it follows), so a clause waits for the phrase after the one that ends it; and never ending in a space or line
+/// break, which what's said next can still take back ("new line" then "comma").
+/// A clause that runs on over two pauses without a mark, like speech without written punctuation (often Hindi + English),
+/// is typed one pause late as any phrase is, so there a "scratch that" said later can't take back typed text. While
+/// nothing is typed, a dictation that may become a list, or an email in an email field, is held and typed whole at the
+/// end. One with nothing typed live ends exactly like a dictation typed at the end. Pure logic: the app does the typing.
 /// </summary>
 public sealed partial class LiveTyping
 {
@@ -183,21 +185,24 @@ public sealed partial class LiveTyping
             return string.Empty;
         }
 
-        // What a "scratch that" said next would keep, and what more words would leave unchanged (a Hindi tag, a run of
-        // fillers or a filler-only sentence is formatted by what follows it).
-        var kept = ClauseMarkRegex().IsMatch(said) ? Prepare(said + " scratch that", layout: false, out _) : final;
+        // What a "scratch that" said next would keep (while the speech marks its clauses), and what more words would leave
+        // unchanged (a Hindi tag, a run of fillers or a filler-only sentence is formatted by what follows it).
+        var kept = MarksItsClauses(said, last) ? Prepare(said + " scratch that", layout: false, out _) : final;
         var continued = Prepare(said + " " + NextWord, layout: false, out _);
         if (kept.Length <= Typed.Length || !kept.StartsWith(Typed, StringComparison.Ordinal) || !continued.StartsWith(Typed, StringComparison.Ordinal))
         {
             return string.Empty;
         }
 
-        for (var k = last; k > TypedPhrases; k--)
+        // The longest run of phrases that is final: all before the last phrase, or one or two fewer. Trying only these keeps
+        // a pause's cost in proportion to the text, however long the dictation (a run can't be judged by its length, as a
+        // "scratch that" in a longer one shortens it).
+        for (var k = last; k > TypedPhrases && k > last - 3; k--)
         {
             var candidate = Prepare(LiveText.Join(_finished.Take(k), string.Empty), layout: false, out var joined);
             if (candidate.Length > Typed.Length && candidate.StartsWith(Typed, StringComparison.Ordinal) && final.StartsWith(candidate, StringComparison.Ordinal)
                 && kept.StartsWith(candidate, StringComparison.Ordinal) && continued.StartsWith(candidate, StringComparison.Ordinal)
-                && !candidate.AsSpan(Typed.Length).IsWhiteSpace())
+                && !char.IsWhiteSpace(candidate[^1]))
             {
                 var type = candidate[Typed.Length..];
                 _joinedWithSpace |= Typed.Length == 0 && joined;
@@ -208,6 +213,19 @@ public sealed partial class LiveTyping
         }
 
         return string.Empty;
+    }
+
+    /// <summary>
+    /// The speech marks its clauses with written punctuation here: what follows the last written mark lies within the last
+    /// finished phrase. Only then is the clause a "scratch that" would drop held back; one that has run on over two pauses
+    /// without a mark is typed like unpunctuated speech, or live typing would stop for the rest of the dictation. Marks are
+    /// read in all that was said as "scratch that" sees it, after filler removal ("Um," leaves none).
+    /// </summary>
+    private bool MarksItsClauses(string said, int last)
+    {
+        var text = _formatter.BeforeScratch(said);
+        var mark = LastClauseMarkRegex().Match(text);
+        return mark.Success && text.AsSpan(mark.Index + 1).TrimStart().Length <= _formatter.BeforeScratch(_finished[last]).Length;
     }
 
     /// <summary>The last finished phrase with words in it (blank or filler-only phrases don't count), or -1.</summary>
@@ -256,8 +274,8 @@ public sealed partial class LiveTyping
     /// <summary>Only whitespace before the cursor. Unknown text isn't the start.</summary>
     private static bool AtStart(string? before) => before is not null && string.IsNullOrWhiteSpace(before);
 
-    // Written punctuation that ends a sentence or clause (not the point in "2.5" or the colon in "3:30"). "Scratch that"
-    // drops back to it; spoken "comma" or "full stop" become marks only after that, so they don't count.
-    [GeneratedRegex(@"[.!?,;:](?=\s|$)")]
-    private static partial Regex ClauseMarkRegex();
+    // The last written mark that ends a sentence or clause (not the point in "2.5" or the colon in "3:30"): "scratch that"
+    // drops back to it. Spoken "comma" or "full stop" become marks only after that, so they don't count.
+    [GeneratedRegex(@"[.!?,;:](?=\s|$)", RegexOptions.RightToLeft)]
+    private static partial Regex LastClauseMarkRegex();
 }

@@ -96,6 +96,16 @@ public sealed partial class DictationFormatter
     }
 
     /// <summary>
+    /// The transcript as "scratch that" sees it: cleaned and with fillers removed (when on), spoken punctuation still
+    /// words. Live typing reads from it the written marks a "scratch that" would stop at ("Um," leaves none).
+    /// </summary>
+    internal string BeforeScratch(string transcript)
+    {
+        var text = TranscriptText.Clean(transcript);
+        return text.Length > 0 && _options.RemoveFillerWords ? RemoveFillers(text) : text;
+    }
+
+    /// <summary>
     /// Drops sounds and discourse fillers that carry no meaning, in English and Hinglish: “um/uh”; tags such as
     /// “thik hai na?” and “…, thik hai?”; “basically”; “you know” / “I mean” between commas; a run of two or more fillers
     /// opening a sentence or clause (“Haan to like …”, “Okay so …”, “Thik hai to like …”); “like” before “for example”;
