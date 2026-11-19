@@ -230,6 +230,31 @@ class StreamingOnDeviceTest {
     }
 
     /**
+     * Kroko emits a word only after hearing a little audio past it. Tapping to finish right after the last word must
+     * not lose it: the clips end with about 0.8 s of silence, so cutting 0.7 s ends them right after the speech.
+     */
+    @Test
+    fun keeps_the_last_words_when_you_stop_right_after_speaking() {
+        assumeTrue("no model at $dir", File(dir, "encoder.onnx").canRead())
+        StreamingRecognizer.load(dir, threads).use { model ->
+            for ((clip, last) in listOf("send-logs.wav" to "latest build logs", "genres.wav" to "different genres", "dictation.wav" to "push the build")) {
+                val full = wav(clip)
+                val audio = full.copyOf(full.size - 11_200)
+                val session = model.session()
+                var i = 0
+                while (i < audio.size) {
+                    val end = minOf(audio.size, i + 1_600)
+                    session.accept(audio.copyOfRange(i, end))
+                    i = end
+                }
+                val text = session.finish()
+                println("ThumbFree kroko cut $clip: $text")
+                assertTrue("$clip keeps \"$last\": $text", text.contains(last, ignoreCase = true))
+            }
+        }
+    }
+
+    /**
      * Kroko writes a few marks itself; given those, the punctuation model added its own after them ("genres.. So I
      * wanted"). The three clips without a pause make one long phrase with Kroko's marks inside it.
      */
