@@ -182,8 +182,17 @@ class StreamingRecognizer private constructor(
     /** Speech thread: a new dictation. */
     fun session() = Session()
 
+    /**
+     * Kroko writes a few marks itself ("push the build."); given those, the punctuation model adds its own after them
+     * ("build.."). Only the model's marks are kept anyway ([LiveText.mergePunctuation]), so it gets the bare words.
+     */
     private fun punctuate(text: String): String =
-        punctuation?.let { runCatching { LiveText.mergePunctuation(text, it.addPunctuation(text)) }.getOrNull() } ?: text
+        punctuation?.let { model ->
+            runCatching {
+                val bare = text.split(' ').map { it.trimEnd('.', ',', '?', '!', ';', ':') }.filter { it.isNotEmpty() }.joinToString(" ")
+                LiveText.mergePunctuation(text, model.addPunctuation(bare))
+            }.getOrNull()
+        } ?: text
 
     /** The whole recording at once (tests, and the fallback when no live session ran). */
     override fun transcribe(samples: FloatArray, preview: Boolean, prompt: String?): String? {

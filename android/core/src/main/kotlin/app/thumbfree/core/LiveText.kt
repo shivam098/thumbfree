@@ -9,9 +9,10 @@ object LiveText {
     private val Ends = setOf('.', '?', '!')
 
     /**
-     * Takes only the punctuation from [punctuated] (the punctuation model's output) and keeps the recognizer's own
-     * words and capitals ([original]); the model re-cases words badly ("YOUTUBE"). Sentence starts are capitalized.
-     * If the two don't have the same words, [original] is returned unchanged.
+     * Takes the punctuation from [punctuated] (the punctuation model's output) and keeps the recognizer's own words and
+     * capitals ([original]); the model re-cases words badly ("YOUTUBE"). Where the model puts no mark, a mark the
+     * recognizer wrote itself is kept. A word never ends in two marks ("build.." or "logs.,"). Sentence starts are
+     * capitalized. If the two don't have the same words, [original] is returned unchanged.
      */
     fun mergePunctuation(original: String, punctuated: String): String {
         val words = original.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
@@ -22,13 +23,22 @@ object LiveText {
         for (i in words.indices) {
             val bare = TrailingMark.replace(words[i], "")
             if (!bare.equals(TrailingMark.replace(marked[i], ""), ignoreCase = true)) return original.trim()
-            val mark = TrailingMark.find(marked[i])?.value.orEmpty()
+            val mark = single(TrailingMark.find(marked[i])?.value ?: TrailingMark.find(words[i])?.value.orEmpty())
             val word = if (sentenceStart && bare.isNotEmpty() && bare[0].isLowerCase()) bare[0].uppercaseChar() + bare.substring(1) else bare
             if (out.isNotEmpty()) out.append(' ')
             out.append(word).append(mark)
             sentenceStart = mark.lastOrNull() in Ends
         }
         return out.toString()
+    }
+
+    /** One mark for a run of them: the one that ends a sentence wins. */
+    private fun single(mark: String) = when {
+        mark.length <= 1 -> mark
+        '?' in mark -> "?"
+        '!' in mark -> "!"
+        '.' in mark -> "."
+        else -> mark.substring(0, 1)
     }
 
     /** The text so far: finished phrases, then the phrase in progress. */

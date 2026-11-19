@@ -172,6 +172,13 @@ class CoreTest {
         assertEquals("Are you free?", LiveText.endSentence("Are you free?"))
         assertEquals("Meet at 4 pm.", LiveText.endSentence("Meet at 4 pm"))
         assertEquals("", LiveText.endSentence(""))
+
+        // The recognizer's own marks stay where the model adds none; the model's win; never two in a row.
+        assertEquals("So I wanted to check. Then push the build.", LiveText.mergePunctuation("so I wanted to check. then push the build.", "So I wanted to check then push the build."))
+        assertEquals("Build, logs.", LiveText.mergePunctuation("build. logs", "build, logs."))
+        assertEquals("Please send me the latest build, logs.", LiveText.mergePunctuation("Please send me the latest build logs.", "Please send me the latest build, logs.,"))
+        assertEquals("Push the build.", LiveText.mergePunctuation("push the build.", "Push the Build.."))
+        assertEquals("Ready? Go!", LiveText.mergePunctuation("ready go", "Ready?. Go!!"))
     }
 
     @Test
