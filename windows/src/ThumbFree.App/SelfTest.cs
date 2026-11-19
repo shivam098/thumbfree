@@ -40,7 +40,16 @@ internal static class SelfTest
 {
     public static async Task RunAsync(string scriptPath, string outputPath, Dispatcher ui)
     {
+        // Status lines arrive on the UI thread while the script runs on others.
         var output = new StringBuilder();
+        void Line(string text)
+        {
+            lock (output)
+            {
+                output.AppendLine(text);
+            }
+        }
+
         var temp = Path.Combine(Path.GetTempPath(), "thumbfree-selftest-" + Environment.ProcessId);
         Directory.CreateDirectory(temp);
         // Default settings, so results don't depend on this PC's (they're never written: the store saves to the temp folder).
@@ -62,7 +71,7 @@ internal static class SelfTest
         host.Status += s =>
         {
             lastStatus = s.Message;
-            output.AppendLine($"   {s.Kind}: {Redact(s.Message)}");
+            Line($"   {s.Kind}: {Redact(s.Message)}");
         };
 
         // The same on-screen feedback as the app, so screenshots of a self-test show what a user would see.
@@ -85,17 +94,17 @@ internal static class SelfTest
                     continue;
                 }
 
-                output.AppendLine($"> {line}");
+                Line($"> {line}");
                 if (stop)
                 {
                     // The expected window or box isn't in front: typing on could go somewhere else.
-                    output.AppendLine("!! stopped after a failed check");
+                    Line("!! stopped after a failed check");
                     break;
                 }
 
                 if (labWindow != 0 && TypesOrPresses(line) && new WindowsDesktop().GetForegroundWindow()?.Handle != labWindow)
                 {
-                    output.AppendLine("!! the test window isn't in front any more; stopped before typing");
+                    Line("!! the test window isn't in front any more; stopped before typing");
                     break;
                 }
 
@@ -105,26 +114,26 @@ internal static class SelfTest
                 }
                 else if (line.StartsWith("ptt:", StringComparison.Ordinal))
                 {
-                    Describe(output, await host.DictateAsync([line[4..].Trim()], live: false).ConfigureAwait(false));
+                    Line(Describe(await host.DictateAsync([line[4..].Trim()], live: false).ConfigureAwait(false)));
                 }
                 else if (line.StartsWith("live:", StringComparison.Ordinal))
                 {
                     var phrases = line[5..].Split('|').Select(p => p.Trim()).ToList();
-                    Describe(output, await host.DictateAsync(phrases, live: true).ConfigureAwait(false));
+                    Line(Describe(await host.DictateAsync(phrases, live: true).ConfigureAwait(false)));
                 }
                 else if (line.StartsWith("wav:", StringComparison.Ordinal))
                 {
                     var path = line[4..].Trim();
                     path = Path.IsPathRooted(path) ? path : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(scriptPath))!, path);
                     var outcome = await PlayAsync(host, recording, WavFile.ReadPcm16Mono16k(path), ++dictations, ui).ConfigureAwait(false);
-                    output.AppendLine($"   heard (test recording): {outcome.Text.Replace("\n", "\\n", StringComparison.Ordinal)}");
-                    Describe(output, outcome);
+                    Line($"   heard (test recording): {outcome.Text.Replace("\n", "\\n", StringComparison.Ordinal)}");
+                    Line(Describe(outcome));
                 }
                 else if (line.StartsWith("model ", StringComparison.Ordinal))
                 {
                     var spec = ModelCatalog.ById(line[6..].Trim()) ?? throw new ArgumentException($"No model {line[6..].Trim()}.");
                     await ui.InvokeAsync(() => store.Update(s => Choose(s, spec)));
-                    output.AppendLine($"   model: {spec.Id} ({(new StoreSpeechModels(models).IsInstalled(spec) ? "installed" : "NOT installed")})");
+                    Line($"   model: {spec.Id} ({(new StoreSpeechModels(models).IsInstalled(spec) ? "installed" : "NOT installed")})");
                 }
                 else if (line.StartsWith("livetyping ", StringComparison.Ordinal))
                 {
@@ -138,13 +147,13 @@ internal static class SelfTest
                     var kind = field?.Kind ?? "unknown";
                     if (line == "field")
                     {
-                        output.AppendLine($"   field: {kind}; text before the cursor: {(field?.TextBefore is { } before ? $"{before.Length} chars{(field.CaretKnown ? string.Empty : ", cursor assumed at the end")}" : "unknown")}");
+                        Line($"   field: {kind}; text before the cursor: {(field?.TextBefore is { } before ? $"{before.Length} chars{(field.CaretKnown ? string.Empty : ", cursor assumed at the end")}" : "unknown")}");
                     }
                     else
                     {
                         var words = line[12..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
                         var pass = words.All(w => kind.Contains(w, StringComparison.OrdinalIgnoreCase));
-                        output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: field is {kind}");
+                        Line($"   {(pass ? "PASS" : "FAIL")}: field is {kind}");
                     }
                 }
                 else if (line == "again")
@@ -168,18 +177,18 @@ internal static class SelfTest
                 }
                 else if (line == "clipboard")
                 {
-                    output.AppendLine($"   clipboard fingerprint: {ClipboardFingerprint()}");
+                    Line($"   clipboard fingerprint: {ClipboardFingerprint()}");
                 }
                 else if (line == "fg")
                 {
                     // Process name only: window titles can contain the user's document or page names.
                     var fg = new WindowsDesktop().GetForegroundWindow();
-                    output.AppendLine($"   foreground: {fg?.ProcessName}");
+                    Line($"   foreground: {fg?.ProcessName}");
                 }
                 else if (line == "read")
                 {
                     var text = ReadFocusedText();
-                    output.AppendLine($"   focused: {text.Type} len={text.Value.Length} hash={Hash(text.Value)}");
+                    Line($"   focused: {text.Type} len={text.Value.Length} hash={Hash(text.Value)}");
                 }
                 else if (line.StartsWith("expectfocus:", StringComparison.Ordinal))
                 {
@@ -194,7 +203,7 @@ internal static class SelfTest
                     }
 
                     var pass = name.Contains(expected, StringComparison.OrdinalIgnoreCase);
-                    output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: focused control {(pass ? "has" : "does not have")} the expected name{(pass ? string.Empty : $" (focused: {ReadFocusedText().Type})")}");
+                    Line($"   {(pass ? "PASS" : "FAIL")}: focused control {(pass ? "has" : "does not have")} the expected name{(pass ? string.Empty : $" (focused: {ReadFocusedText().Type})")}");
                     stop |= stopOnFail && !pass;
                 }
                 else if (line.StartsWith("expecttitle:", StringComparison.Ordinal))
@@ -204,7 +213,7 @@ internal static class SelfTest
                     var expected = line[12..].Trim();
                     var foreground = new WindowsDesktop().GetForegroundWindow();
                     var pass = (foreground?.Title ?? string.Empty).Contains(expected, StringComparison.OrdinalIgnoreCase);
-                    output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: foreground title {(pass ? "contains" : "does not contain")} the expected phrase");
+                    Line($"   {(pass ? "PASS" : "FAIL")}: foreground title {(pass ? "contains" : "does not contain")} the expected phrase");
                     stop |= stopOnFail && !pass;
                     labWindow = pass ? foreground!.Handle : labWindow;
                 }
@@ -217,14 +226,14 @@ internal static class SelfTest
                     // Status posts arrive through the UI dispatcher; give them a moment.
                     await Task.Delay(300).ConfigureAwait(false);
                     var pass = lastStatus.Contains(line[13..].Trim(), StringComparison.OrdinalIgnoreCase);
-                    output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: last status {(pass ? "contains" : "does not contain")} the phrase");
+                    Line($"   {(pass ? "PASS" : "FAIL")}: last status {(pass ? "contains" : "does not contain")} the phrase");
                 }
                 else if (line.StartsWith("expectnot:", StringComparison.Ordinal))
                 {
                     var unexpected = line[10..].Trim();
                     var actual = ReadFocusedText().Value;
                     var pass = !actual.Contains(unexpected, StringComparison.Ordinal);
-                    output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: focused text {(pass ? "does not contain" : "contains")} the phrase (field len={actual.Length})");
+                    Line($"   {(pass ? "PASS" : "FAIL")}: focused text {(pass ? "does not contain" : "contains")} the phrase (field len={actual.Length})");
                 }
                 else if (line.StartsWith("expect:", StringComparison.Ordinal))
                 {
@@ -232,11 +241,11 @@ internal static class SelfTest
                     var expected = line[7..].Trim().Replace("\\n", "\n", StringComparison.Ordinal);
                     var actual = ReadFocusedText().Value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Replace('\v', '\n');
                     var pass = actual.Contains(expected, StringComparison.Ordinal);
-                    output.AppendLine($"   {(pass ? "PASS" : "FAIL")}: focused text {(pass ? "contains" : "does not contain")} the expected phrase (field len={actual.Length})");
+                    Line($"   {(pass ? "PASS" : "FAIL")}: focused text {(pass ? "contains" : "does not contain")} the expected phrase (field len={actual.Length})");
                 }
                 else
                 {
-                    output.AppendLine("   ?? unknown command");
+                    Line("   ?? unknown command");
                 }
 
                 await Task.Delay(400).ConfigureAwait(false);
@@ -247,7 +256,7 @@ internal static class SelfTest
         }
         catch (Exception ex)
         {
-            output.AppendLine($"!! {ex.GetType().Name}: {ex.Message}");
+            Line($"!! {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -260,7 +269,13 @@ internal static class SelfTest
             }
         }
 
-        await File.WriteAllTextAsync(outputPath, output.ToString()).ConfigureAwait(false);
+        string written;
+        lock (output)
+        {
+            written = output.ToString();
+        }
+
+        await File.WriteAllTextAsync(outputPath, written).ConfigureAwait(false);
     }
 
     /// <summary>Plays <paramref name="audio"/> as if spoken now: Ctrl+Win, the recording in real time, Ctrl+Win.</summary>
@@ -291,8 +306,8 @@ internal static class SelfTest
         }
     }
 
-    private static void Describe(StringBuilder output, DictationOutcome outcome) =>
-        output.AppendLine($"   {(outcome.TypedAll ? "typed" : outcome.Kept ? "kept for copying" : "not typed: " + outcome.Problem)} (len={outcome.Text.Length})");
+    private static string Describe(DictationOutcome outcome) =>
+        $"   {(outcome.TypedAll ? "typed" : outcome.Kept ? "kept for copying" : "not typed: " + outcome.Problem)} (len={outcome.Text.Length})";
 
     /// <summary>Script lines that type or press keys: they run only while the test window is in front.</summary>
     private static bool TypesOrPresses(string line) =>

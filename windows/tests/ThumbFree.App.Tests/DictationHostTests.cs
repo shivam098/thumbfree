@@ -92,6 +92,7 @@ public sealed class DictationHostTests : IDisposable
     [Fact]
     public async Task A_password_field_stops_the_recording_and_keeps_nothing()
     {
+        await _services.Settings.UpdateAsync(s => s.SaveSamples = true);
         _fields.Field = _fields.Field! with { Password = true, MultiLine = false, TextBefore = null };
         _models.Session.Script = _ => (["my secret"], string.Empty);
         _models.Session.Final = ["my secret", "again"];
@@ -102,8 +103,124 @@ public sealed class DictationHostTests : IDisposable
 
         Assert.Empty(_desktop.Typed);
         Assert.Empty(_services.History.Entries());
-        Assert.Contains(_status, s => s.Message.Contains("password", StringComparison.Ordinal));
+        Assert.Equal(0, _services.Samples.Summary().Count);
+        Assert.Single(_status, s => s.Message.Contains("password", StringComparison.Ordinal));
         Assert.False(_audio.Running);
+    }
+
+    [Fact]
+    public async Task A_password_field_the_first_read_missed_is_refused_when_typing_and_nothing_is_kept()
+    {
+        // A Chromium page whose accessibility wasn't ready, or UI Automation too slow: the read gives nothing, but the
+        // check right before typing sees the password field.
+        await _services.Settings.UpdateAsync(s => s.SaveSamples = true);
+        _fields.Field = null;
+        _desktop.Check = FieldCheck.Password;
+        _models.Session.Script = accepted => accepted < 5 ? (["My secret words."], "and") : (["My secret words.", "And more."], string.Empty);
+        _models.Session.Final = ["My secret words.", "And more.", "Done"];
+
+        _host.BeginDictationCapture(5);
+        await _audio.SpeakAsync(seconds: 1.2);
+        await WaitForAsync(() => _stopped.Contains(5));
+
+        Assert.Empty(_desktop.Typed);
+        Assert.False(_audio.Running);
+        Assert.Empty(_services.History.Entries());
+        Assert.Equal(0, _services.Samples.Summary().Count);
+        Assert.Null(_services.Notifier!.UntypedText);
+        Assert.Null(_host.Inserter.LastText);
+        Assert.Single(_status, s => s.Message.Contains("password", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_password_field_first_seen_when_the_end_is_typed_keeps_nothing()
+    {
+        // Nothing was typed while speaking, so the check right before typing the end is the first to see it.
+        await _services.Settings.UpdateAsync(s => s.SaveSamples = true);
+        _fields.Field = null;
+        _desktop.Check = FieldCheck.Password;
+
+        var outcome = await _host.DictateAsync(["My secret words."], live: false).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("password field", outcome.Problem);
+        Assert.Empty(_desktop.Typed);
+        Assert.Empty(_services.History.Entries());
+        Assert.Equal(0, _services.Samples.Summary().Count);
+        Assert.Null(_services.Notifier!.UntypedText);
+        Assert.Null(_host.Inserter.LastText);
+    }
+
+    [Fact]
+    public async Task A_private_browser_window_keeps_no_history_even_when_its_box_cant_be_read()
+    {
+        _desktop.Window = new WindowInfo(43, 8, "msedge", "New tab - [InPrivate] - Microsoft Edge");
+        _fields.Field = null;
+        _models.Session.Script = _ => ([], "private words");
+        _models.Session.Final = ["Private words."];
+
+        _host.BeginDictationCapture(1);
+        await _audio.SpeakAsync(seconds: 0.5);
+        _host.EndDictationCapture(cancel: false);
+        var outcome = await FinishedAsync();
+
+        Assert.True(outcome.TypedAll);
+        Assert.Equal("Private words.", _desktop.Typed);
+        Assert.Empty(_services.History.Entries());
+    }
+
+    [Fact]
+    public async Task Typing_that_fails_types_nothing_more_and_keeps_the_whole_dictation_to_copy()
+    {
+        _desktop.FailTyping = true;
+        _models.Session.Script = accepted => accepted < 5 ? (["Hello there."], "how are") : (["Hello there.", "How are you?"], string.Empty);
+        _models.Session.Final = ["Hello there.", "How are you?", "I'm fine"];
+
+        _host.BeginDictationCapture(1);
+        await _audio.SpeakAsync(seconds: 1.2);
+        _host.EndDictationCapture(cancel: false);
+        var outcome = await FinishedAsync();
+
+        Assert.Empty(_desktop.Typed);
+        Assert.True(outcome.Kept);
+        Assert.Equal("Hello there. How are you? I'm fine.", _services.Notifier!.UntypedText);
+        Assert.Equal("Hello there. How are you? I'm fine.", Assert.Single(_services.History.Entries()).Text);
+    }
+
+    [Fact]
+    public async Task A_scripted_dictation_ends_even_when_typing_fails()
+    {
+        _desktop.FailTyping = true;
+
+        var dictation = _host.DictateAsync(["Hello there."], live: false);
+        var outcome = await dictation.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(outcome.Kept);
+    }
+
+    [Fact]
+    public async Task The_text_box_is_checked_right_before_typing_after_everything_else()
+    {
+        // The focus moves while the inserter checks the field (as when Ctrl+Tab is held while a phrase is typed).
+        _desktop.OnCheck = () => _fields.Same = false;
+
+        var outcome = await _host.DictateAsync(["Hello there."], live: false).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(_desktop.Typed);
+        Assert.True(outcome.Kept);
+    }
+
+    [Fact]
+    public async Task A_dictation_started_while_the_last_one_types_reads_its_box_again()
+    {
+        // The box's text as it is when read; typing lands late, as it does after Ctrl+Win while the keys are let go.
+        _fields.Reader = () => _fields.Field! with { TextBefore = _desktop.Typed };
+        _desktop.TypeDelayMs = 300;
+
+        var first = _host.DictateAsync(["Hello there."], live: false);
+        var second = _host.DictateAsync(["how are you?"], live: false);
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("Hello there. How are you?", _desktop.Typed);
     }
 
     [Fact]
@@ -147,19 +264,34 @@ public sealed class DictationHostTests : IDisposable
     }
 
     [Fact]
-    public async Task Switching_language_applies_at_once_and_fetches_a_small_model_that_is_missing()
+    public void Switching_language_applies_at_once_and_fetches_a_small_model_that_is_missing()
     {
         _models.Installed.Remove(ModelCatalog.Hinglish.Id);
-        var accurateBefore = _services.Current.HinglishTier;
 
-        await _services.Settings.UpdateAsync(s => s.Language = Language.Hinglish);
+        LanguageSwitch.Toggle(_services.Settings);
 
         _downloads.WaitStarted(ModelCatalog.Hinglish);
         Assert.Contains(_status, s => s.Message.Contains("Hindi + English", StringComparison.Ordinal));
-        Assert.Equal(accurateBefore, _services.Current.HinglishTier);
         _host.BeginDictationCapture(3);
         Assert.Contains(3, _stopped);
         Assert.False(_audio.Running);
+    }
+
+    [Fact]
+    public async Task Alt_Shift_H_keeps_the_model_chosen_for_each_language()
+    {
+        await _services.Settings.UpdateAsync(s =>
+        {
+            s.EnglishTier = Tier.Standard;
+            s.HinglishTier = Tier.Accurate;
+        });
+
+        LanguageSwitch.Toggle(_services.Settings);
+        Assert.Equal(ModelCatalog.HinglishAccurate, _services.Current.SelectedModel());
+        LanguageSwitch.Toggle(_services.Settings);
+
+        Assert.Equal(ModelCatalog.EnglishFast, _services.Current.SelectedModel());
+        Assert.Equal(Tier.Accurate, _services.Current.HinglishTier);
     }
 
     [Fact]
@@ -203,7 +335,18 @@ public sealed class DictationHostTests : IDisposable
     {
         private readonly StringBuilder _typed = new();
 
+        public volatile bool FailTyping;
+
         public WindowInfo? Window { get; set; }
+
+        /// <summary>What the inserter's own field check finds.</summary>
+        public FieldCheck Check { get; set; } = FieldCheck.Safe;
+
+        /// <summary>Runs during the inserter's field check.</summary>
+        public Action? OnCheck { get; set; }
+
+        /// <summary>How long a paste takes to land (as when Ctrl+Win is still being let go).</summary>
+        public int TypeDelayMs { get; set; }
 
         public string Typed
         {
@@ -218,12 +361,26 @@ public sealed class DictationHostTests : IDisposable
 
         public WindowInfo? GetForegroundWindow() => Window;
 
-        public FieldCheck CheckFocusedField() => FieldCheck.Safe;
+        public FieldCheck CheckFocusedField()
+        {
+            OnCheck?.Invoke();
+            return Check;
+        }
 
         public bool? FocusedTextEndsWithNonWhitespace() => null;
 
         public void TypeText(string text)
         {
+            if (FailTyping)
+            {
+                throw new InvalidOperationException("The clipboard is in use by another app.");
+            }
+
+            if (TypeDelayMs > 0)
+            {
+                Thread.Sleep(TypeDelayMs);
+            }
+
             lock (_typed)
             {
                 _typed.Append(text);
@@ -243,9 +400,12 @@ public sealed class DictationHostTests : IDisposable
     {
         public FocusedField? Field { get; set; }
 
+        /// <summary>Reads the box as it is at the time (instead of <see cref="Field"/>).</summary>
+        public Func<FocusedField?>? Reader { get; set; }
+
         public volatile bool Same = true;
 
-        public FocusedField? Read(WindowInfo window) => Field;
+        public FocusedField? Read(WindowInfo window) => Reader is { } read ? read() : Field;
 
         public bool? IsSameField(FocusedField start, WindowInfo? now) => Same;
 

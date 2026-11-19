@@ -42,6 +42,7 @@ internal sealed class DictationHost : IDisposable
 
     private readonly AppServices _services;
     private readonly IDesktop _desktop;
+    private readonly GuardedDesktop _guarded;
     private readonly IFieldReader _fields;
     private readonly IAudioSource _audio;
     private readonly SpeechThread _speech;
@@ -83,6 +84,7 @@ internal sealed class DictationHost : IDisposable
         _services = services;
         _post = post;
         _desktop = desktop;
+        _guarded = new GuardedDesktop(desktop, desktop is WindowsDesktop ? () => KeyboardInput.WaitForModifiersReleased() : () => { });
         _fields = fields;
         _audio = audio;
         _speech = new SpeechThread(models);
@@ -178,6 +180,7 @@ internal sealed class DictationHost : IDisposable
         Log.Info($"dictation {id}: {spec.Id}, {(live ? "live typing" : "typed at the end")}{(d.PreviewSpec is { } p ? $", preview {p.Id}" : string.Empty)}{(practice is null ? string.Empty : ", practice box")}{(window is null && practice is null ? ", no window" : string.Empty)}");
         if (window is not null)
         {
+            d.TypedAtRead = _guarded.Typed;
             d.FieldRead = Task.Run(() => _fields.Read(window));
             _ = d.FieldRead.ContinueWith(
                 read =>
@@ -244,6 +247,7 @@ internal sealed class DictationHost : IDisposable
         var d = new Dictation(0, settings.SelectedModel(), settings, _formatter, window, practice: null, live, previewSpec: null);
         if (window is not null)
         {
+            d.TypedAtRead = _guarded.Typed;
             d.FieldRead = Task.Run(() => _fields.Read(window));
         }
 
@@ -251,18 +255,32 @@ internal sealed class DictationHost : IDisposable
         var done = new TaskCompletionSource<DictationOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         Enqueue(async () =>
         {
-            for (var i = 1; live && i <= phrases.Count; i++)
+            try
             {
-                lock (d.Gate)
+                for (var i = 1; live && i <= phrases.Count; i++)
                 {
-                    d.Phrases.Clear();
-                    d.Phrases.AddRange(phrases.Take(i));
-                }
+                    lock (d.Gate)
+                    {
+                        d.Phrases.Clear();
+                        d.Phrases.AddRange(phrases.Take(i));
+                    }
 
-                await UpdateAsync(d).ConfigureAwait(false);
+                    await UpdateAsync(d).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                Log.Error($"self-test dictation failed while speaking: {ex.GetType().Name}");
             }
 
-            done.SetResult(await FinishAsync(d, Task.FromResult<IReadOnlyList<string>?>(phrases), []).ConfigureAwait(false));
+            try
+            {
+                done.SetResult(await FinishAsync(d, Task.FromResult<IReadOnlyList<string>?>(phrases), []).ConfigureAwait(false));
+            }
+            catch (Exception ex)
+            {
+                done.TrySetException(ex);
+            }
         });
         return done.Task;
     }
@@ -792,9 +810,23 @@ internal sealed class DictationHost : IDisposable
 
         d.Field = field;
 
+        // Typing since the box was read (the end of the previous dictation, Alt+Shift+Z) changed the text before the
+        // cursor: read it again, now that this dictation's turn to type has come.
+        if (field is not null && d.Window is { } window && _guarded.Typed != d.TypedAtRead)
+        {
+            var again = await Task.Run(() => _fields.Read(window)).ConfigureAwait(false);
+            if (again is not null && (field.ElementId is null || (again.ElementId is { } id && id.AsSpan().SequenceEqual(field.ElementId))))
+            {
+                Log.Info($"dictation {d.Id}: text before the cursor read again after typing");
+                field = field with { TextBefore = again.TextBefore, CaretKnown = again.CaretKnown, Password = field.Password || again.Password };
+                d.Field = field;
+            }
+        }
+
         // A box UI Automation can't read is treated as one that takes line breaks, as Voice Dictation did: "new line"
-        // presses the app's new-line keys (Shift+Enter in chat apps).
-        d.Info = field?.ToFieldInfo() ?? new FieldInfo(MultiLine: true);
+        // presses the app's new-line keys (Shift+Enter in chat apps). A browser window that says it's private stays
+        // private.
+        d.Info = field?.ToFieldInfo() ?? new FieldInfo(MultiLine: true, Private: d.Window is { } w && FocusInspector.IsPrivateWindow(w));
         if (d.Info.Password)
         {
             d.Refused = true;
@@ -811,37 +843,71 @@ internal sealed class DictationHost : IDisposable
         return d.Typing;
     }
 
-    /// <summary>Types into the dictation's own text box only: a different window or box detaches it (PLAN 3.6).</summary>
+    /// <summary>
+    /// Types into the dictation's own text box only. The box is checked right before each paste or key press, after any
+    /// held modifier keys are let go (<see cref="GuardedDesktop"/>): a different window or box detaches the dictation
+    /// (PLAN 3.6). A password field that the read at the start missed (a Chromium page not ready yet, or UI Automation
+    /// too slow) refuses it, and then nothing of it is kept.
+    /// </summary>
     private bool TypeIntoField(Dictation d, string text)
     {
-        if (d.DetachReason is not null || text.Length == 0)
+        if (d.DetachReason is not null || d.Refused || text.Length == 0)
         {
             return false;
         }
 
-        var now = _desktop.GetForegroundWindow();
-        var same = d.Field is { } field
-            ? _fields.IsSameField(field, now)
-            : now is not null && d.Window is not null && now.Handle == d.Window.Handle;
-        if (same == false)
+        _guarded.Guard = () => SameField(d);
+        try
+        {
+            if (_inserter.TypePrepared(text, d.Info))
+            {
+                d.TypedAny = true;
+                return true;
+            }
+
+            if (_guarded.LastCheck == FieldCheck.Password)
+            {
+                // The inserter has said so already.
+                Interlocked.Exchange(ref d.RefusalShown, 1);
+                d.Refused = true;
+                _post(() => Refuse(d));
+                return false;
+            }
+
+            Detach(d, "The text box didn't take it.");
+            return false;
+        }
+        catch (FieldChangedException)
         {
             Detach(d, "You moved to another window or text box, so it wasn't typed there.");
             return false;
         }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // The clipboard was busy, Windows blocked the input, or a new-line key in the settings is wrong.
+            Log.Error($"typing failed: {ex.GetType().Name} 0x{ex.HResult:X8}");
+            Detach(d, "The text box didn't take it.");
+            return false;
+        }
+        finally
+        {
+            _guarded.Guard = null;
+        }
+    }
 
+    /// <summary>The dictation's text box has the focus (or it can't be told in time, in the same window).</summary>
+    private bool SameField(Dictation d)
+    {
+        var now = _desktop.GetForegroundWindow();
+        var same = d.Field is { } field
+            ? _fields.IsSameField(field, now)
+            : now is not null && d.Window is not null && now.Handle == d.Window.Handle;
         if (same is null)
         {
             Log.Info("same-field check timed out in the same window; typing");
         }
 
-        if (!_inserter.TypePrepared(text, d.Info))
-        {
-            Detach(d, "The text box didn't take it.");
-            return false;
-        }
-
-        d.TypedAny = true;
-        return true;
+        return same != false;
     }
 
     private static void Detach(Dictation d, string reason)
@@ -926,6 +992,13 @@ internal sealed class DictationHost : IDisposable
             if (rest.Length > 0)
             {
                 TypeIntoField(d, rest);
+            }
+
+            if (d.Refused)
+            {
+                // A password field after all: nothing is offered for copying or kept.
+                outcome = outcome with { Problem = "password field" };
+                return outcome;
             }
 
             if (d.DetachReason is { } reason)
@@ -1051,7 +1124,7 @@ internal sealed class DictationHost : IDisposable
 
     private DictationInserter NewInserter(DictationFormatter formatter, string? lastText)
     {
-        var inserter = new DictationInserter(_desktop, formatter, Copy(_services.Current.NewLineKeys)) { LastText = lastText };
+        var inserter = new DictationInserter(_guarded, formatter, Copy(_services.Current.NewLineKeys)) { LastText = lastText };
         inserter.Status += update => _post(() => Status?.Invoke(update));
         return inserter;
     }
@@ -1115,6 +1188,60 @@ internal sealed class DictationHost : IDisposable
 
     private void PostActivity(string? activity) => _post(() => Activity?.Invoke(activity));
 
+    /// <summary>The dictation's text box lost the focus between two pieces of typing.</summary>
+    private sealed class FieldChangedException() : Exception("The text box lost the focus.");
+
+    /// <summary>
+    /// The desktop the inserter types through. Right before each paste or key press it waits for held modifier keys to be
+    /// let go (WindowsDesktop would, after any check) and then runs <see cref="Guard"/>: Ctrl+Tab, Ctrl+L or Ctrl+F held
+    /// while a phrase is typed must not send it to the new tab or bar. It also counts what was typed and remembers the last
+    /// field check, so a refusal for a password field can be told apart.
+    /// </summary>
+    private sealed class GuardedDesktop(IDesktop inner, Action waitForModifiers) : IDesktop
+    {
+        private int _typed;
+
+        /// <summary>True while the dictation's box has the focus; null types anywhere (Alt+Shift+Z). Queue only.</summary>
+        public Func<bool>? Guard { get; set; }
+
+        public FieldCheck LastCheck { get; private set; } = FieldCheck.Unknown;
+
+        /// <summary>How many times text or keys went into an app.</summary>
+        public int Typed => Volatile.Read(ref _typed);
+
+        public WindowInfo? GetForegroundWindow() => inner.GetForegroundWindow();
+
+        public FieldCheck CheckFocusedField() => LastCheck = inner.CheckFocusedField();
+
+        public bool? FocusedTextEndsWithNonWhitespace() => inner.FocusedTextEndsWithNonWhitespace();
+
+        public void TypeText(string text)
+        {
+            Check();
+            inner.TypeText(text);
+            Interlocked.Increment(ref _typed);
+        }
+
+        public void PressKeys(string chord)
+        {
+            Check();
+            inner.PressKeys(chord);
+            Interlocked.Increment(ref _typed);
+        }
+
+        private void Check()
+        {
+            if (Guard is { } guard)
+            {
+                waitForModifiers();
+                if (!guard())
+                {
+                    throw new FieldChangedException();
+                }
+            }
+        }
+    }
+
     /// <summary>One dictation, from Ctrl+Win to the end of typing. Comments say which thread uses what.</summary>
     private sealed class Dictation(int id, ModelSpec spec, AppSettings settings, DictationFormatter formatter, WindowInfo? window, IPracticeTarget? practice, bool live, ModelSpec? previewSpec)
     {
@@ -1169,6 +1296,9 @@ internal sealed class DictationHost : IDisposable
 
         /// <summary>The text box, read through UI Automation when it started (null result: it couldn't tell).</summary>
         public Task<FocusedField?> FieldRead { get; set; } = Task.FromResult<FocusedField?>(null);
+
+        /// <summary><see cref="GuardedDesktop.Typed"/> when the box was read: typing since then changed the text before the cursor.</summary>
+        public int TypedAtRead { get; set; }
 
         public Timer? PreviewTimer { get; set; }
 

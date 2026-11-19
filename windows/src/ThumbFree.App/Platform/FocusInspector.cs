@@ -63,6 +63,13 @@ internal static class FocusInspector
     };
 
     /// <summary>
+    /// A browser window whose title says it's private (Edge's InPrivate, Firefox's private browsing). Chrome's and Brave's
+    /// private windows don't say so in their titles, which is why samples are never kept from browsers at all.
+    /// </summary>
+    public static bool IsPrivateWindow(WindowInfo window) =>
+        Browsers.IsBrowser(window.ProcessName) && PrivateTitles.Any(t => window.Title.Contains(t, StringComparison.Ordinal));
+
+    /// <summary>
     /// The focused field of <paramref name="window"/>, or null when UI Automation can't tell within the time limit (the
     /// caller then treats the field as one that takes line breaks, as Voice Dictation did). The first dictation into a
     /// Chromium app can take up to a second longer (<see cref="FocusedElement"/>).
@@ -171,7 +178,7 @@ internal static class FocusInspector
                 (current.AutomationId ?? string.Empty).Contains("search", StringComparison.OrdinalIgnoreCase);
             bool? multiLine = password || search ? false : IsMultiLine(element, current, window.ProcessName, browser);
             var email = !search && (EmailProcesses.Contains(window.ProcessName) || (browser && WebmailTitles.Any(t => window.Title.Contains(t, StringComparison.Ordinal))));
-            var privateWindow = browser && PrivateTitles.Any(t => window.Title.Contains(t, StringComparison.Ordinal));
+            var privateWindow = IsPrivateWindow(window);
             var (before, caretKnown) = password ? (null, false) : TextBeforeCaret(element);
             var lines = multiLine switch { true => " multi-line", false => " single-line", null => string.Empty };
             var kind = $"{controlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal)}{lines}{(search ? " search" : string.Empty)}{(email ? " email" : string.Empty)}{(password ? " password" : string.Empty)}{(privateWindow ? " private" : string.Empty)}";

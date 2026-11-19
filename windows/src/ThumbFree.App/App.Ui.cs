@@ -88,8 +88,13 @@ public partial class App
         _overlay?.SetDictationLanguage(settings.Language == Language.Hinglish, settings.HinglishTier == Tier.Accurate);
 
     /// <summary>Alt+Shift+H: English ⇄ Hindi + English, saved in Settings; the tier chosen for each language stays.</summary>
-    private void ToggleLanguage() =>
-        _services?.Settings.Update(s => s.Language = s.Language == Language.Hinglish ? Language.English : Language.Hinglish);
+    private void ToggleLanguage()
+    {
+        if (_services is not null)
+        {
+            LanguageSwitch.Toggle(_services.Settings);
+        }
+    }
 
     /// <summary>First run opens the guide; any other launch by the person opens the window (sign-in starts quietly in the tray).</summary>
     private void OpenAtStart(string[] args)
