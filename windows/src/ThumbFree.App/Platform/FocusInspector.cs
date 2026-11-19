@@ -47,11 +47,6 @@ internal static class FocusInspector
 
     private static readonly string[] PrivateTitles = ["InPrivate", "Incognito", "Private Browsing", "Private browsing"];
 
-    private static readonly HashSet<string> Browsers = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "arc", "zen", "librewolf", "waterfox", "chromium", "thorium",
-    };
-
     /// <summary>Editors where any focused text area takes line breaks.</summary>
     private static readonly HashSet<string> MultiLineEditors = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -116,7 +111,7 @@ internal static class FocusInspector
             var name = current.Name ?? string.Empty;
             var controlType = current.ControlType;
             var password = current.IsPassword;
-            var browser = Browsers.Contains(window.ProcessName);
+            var browser = Browsers.IsBrowser(window.ProcessName);
             var addressBar = className.EndsWith("OmniboxViewViews", StringComparison.Ordinal) || (browser && controlType == ControlType.Edit && !InPage(element));
             var search = addressBar || name.Contains("search", StringComparison.OrdinalIgnoreCase) ||
                 (current.AutomationId ?? string.Empty).Contains("search", StringComparison.OrdinalIgnoreCase);
