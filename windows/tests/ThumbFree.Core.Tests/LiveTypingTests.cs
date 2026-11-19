@@ -128,6 +128,36 @@ public class LiveTypingTests
     }
 
     [Fact]
+    public void A_filler_comma_leaves_speech_unpunctuated()
+    {
+        // "Um," is gone once the filler is removed, so it's no mark for "scratch that" to stop at.
+        var d = new Dictation("", SingleLine);
+        Assert.Equal("", d.Pause("Um, so the demo is ready"));
+        Assert.Equal("So the demo is ready", d.Pause("and we can ship it"));
+        Assert.Equal(" and we can ship it", d.Pause("on Friday after the review"));
+        Assert.Equal(" on Friday after the review", d.Pause("with the whole team"));
+        Assert.Equal(" with the whole team", d.Finish());
+    }
+
+    [Fact]
+    public void Live_typing_goes_on_after_the_last_written_mark()
+    {
+        // A clause that runs on over two pauses without a mark is typed like unpunctuated speech.
+        var d = new Dictation("", MultiLine);
+        Assert.Equal("", d.Pause("We shipped it. and then we"));
+        Assert.Equal("We shipped it. And then we", d.Pause("went to the office"));
+        Assert.Equal(" went to the office", d.Pause("and had a long meeting"));
+        Assert.Equal(" and had a long meeting about the launch", d.Finish("about the launch"));
+
+        var e = new Dictation("", SingleLine);
+        Assert.Equal("", e.Pause("Um so the demo is ready"));
+        Assert.Equal("So the demo is ready", e.Pause("and we can ship it"));
+        Assert.Equal(" and we can ship it", e.Pause("on Friday, after the review"));
+        Assert.Equal(" on Friday, after the review", e.Pause("with the whole team"));
+        Assert.Equal(" with the whole team and then celebrate", e.Finish("and then celebrate"));
+    }
+
+    [Fact]
     public void An_email_is_held_and_typed_laid_out_when_finished()
     {
         var row = Vectors.Rows("layout.tsv").Select(r => r.Split('\t')).First(c => c[0] == "mse" && c[1].StartsWith("Hey Tim", StringComparison.Ordinal));
@@ -342,6 +372,22 @@ public class LiveTypingTests
     }
 
     [Fact]
+    public void A_line_break_waits_for_the_words_after_it()
+    {
+        // A spoken mark right after spoken line breaks takes them back ("…it, we left"), so text ending in one waits.
+        var d = new Dictation("", SingleLine);
+        Assert.Equal("", d.Pause("We shipped it new line"));
+        Assert.Equal("", d.Pause("new line"));
+        Assert.Equal("We shipped it, we left", d.Finish("comma we left"));
+        Assert.Equal(d.All, AtTheEnd(d));
+
+        var e = new Dictation("", MultiLine);
+        Assert.Equal("", e.Pause("Dear team new line"));
+        Assert.Equal("", e.Pause("the build is green."));
+        Assert.Equal("Dear team\nThe build is green.", e.Pause("Thanks."));
+    }
+
+    [Fact]
     public void Empty_and_filler_only_phrases_are_ignored()
     {
         var d = new Dictation("", SingleLine);
@@ -414,9 +460,10 @@ public class LiveTypingTests
     }
 
     /// <summary>
-    /// Typing live doesn't change the outcome unless <see cref="LiveTyping.FinishedWithoutLayout"/> says so: over
-    /// generated dictations (fixed seed), the pieces typed while speaking plus <see cref="LiveTyping.Finish"/> equal the
-    /// same dictation typed at the end.
+    /// Typing live doesn't change the outcome unless <see cref="LiveTyping.FinishedWithoutLayout"/> says so. Over generated
+    /// dictations (fixed seed), the same dictation typed at the end, by a separate <see cref="LiveTyping"/>, is compared
+    /// with what was actually typed: where it begins with the pieces typed while speaking, <see cref="LiveTyping.Finish"/>
+    /// must add exactly the rest; where it doesn't, the dictation must say it ended apart.
     /// </summary>
     [Fact]
     public void Typing_live_ends_with_the_text_typed_at_the_end()
@@ -429,17 +476,20 @@ public class LiveTypingTests
         {
             var context = new LiveTypingContext(Pick(random, Befores), Pick(random, Fields), Live: true, SmartFormatting: random.Next(4) != 0);
             var phrases = Phrases(random, Rich);
-            var (all, live, typing) = TypeLive(formatter, context, phrases);
-            typedLive += live ? 1 : 0;
-            Assert.False(typing.PhrasesChanged);
-            if (typing.FinishedWithoutLayout)
-            {
-                apart++;
-                continue;
-            }
-
             var atEnd = new LiveTyping(formatter, context with { Live = false }).Finish(phrases);
-            Assert.True(atEnd == all, $"{Describe(context, phrases)}\n  live:   {Vectors.Escape(all)}\n  at end: {Vectors.Escape(atEnd)}");
+            var (live, rest, typing) = TypeLive(formatter, context, phrases);
+            typedLive += live.Length > 0 ? 1 : 0;
+            Assert.False(typing.PhrasesChanged);
+            var what = $"{Describe(context, phrases)}\n  live:   {Vectors.Escape(live)}|{Vectors.Escape(rest)}\n  at end: {Vectors.Escape(atEnd)}";
+            if (atEnd.StartsWith(live, StringComparison.Ordinal))
+            {
+                Assert.True(!typing.FinishedWithoutLayout && live + rest == atEnd, what);
+            }
+            else
+            {
+                Assert.True(typing.FinishedWithoutLayout, what);
+                apart++;
+            }
         }
 
         // Not true by holding everything back: most dictations type something while speaking, and few end apart.
@@ -447,7 +497,7 @@ public class LiveTypingTests
         Assert.True(apart < Runs / 20, $"{apart} of {Runs} ended apart");
     }
 
-    /// <summary>Plain speech (no corrections, "scratch that", lists or emails) always ends like the dictation typed at the end.</summary>
+    /// <summary>Plain speech (no corrections, "scratch that", lists or emails): what's typed while speaking is always where the end result begins.</summary>
     [Fact]
     public void Plain_speech_never_ends_apart()
     {
@@ -457,9 +507,46 @@ public class LiveTypingTests
         {
             var context = new LiveTypingContext(Pick(random, Befores), Pick(random, Fields), Live: true, SmartFormatting: random.Next(4) != 0);
             var phrases = Phrases(random, Plain);
-            var (all, _, typing) = TypeLive(formatter, context, phrases);
             var atEnd = new LiveTyping(formatter, context with { Live = false }).Finish(phrases);
-            Assert.True(!typing.FinishedWithoutLayout && atEnd == all, $"{Describe(context, phrases)}\n  live:   {Vectors.Escape(all)}\n  at end: {Vectors.Escape(atEnd)}");
+            var (live, rest, typing) = TypeLive(formatter, context, phrases);
+            Assert.True(
+                atEnd.StartsWith(live, StringComparison.Ordinal) && live + rest == atEnd && !typing.FinishedWithoutLayout,
+                $"{Describe(context, phrases)}\n  live:   {Vectors.Escape(live)}|{Vectors.Escape(rest)}\n  at end: {Vectors.Escape(atEnd)}");
+        }
+    }
+
+    /// <summary>
+    /// Unpunctuated speech is typed while speaking, also after a filler comma ("Um, …") or one written mark: by the time
+    /// three phrases have finished, something is typed.
+    /// </summary>
+    [Fact]
+    public void Unpunctuated_speech_is_typed_while_speaking()
+    {
+        var random = new Random(312);
+        var formatter = new DictationFormatter();
+        for (var n = 0; n < 1500; n++)
+        {
+            var phrases = Enumerable.Range(0, 4 + random.Next(4)).Select(_ => Pick(random, Unpunctuated)).ToArray();
+            if (random.Next(3) == 1)
+            {
+                phrases[0] = "Um, " + phrases[0];
+            }
+            else if (random.Next(2) == 1)
+            {
+                // One mark after any word but the very last.
+                var i = random.Next(phrases.Length - 1);
+                var words = phrases[i].Split(' ');
+                words[random.Next(words.Length)] += Pick(random, [",", "."]);
+                phrases[i] = string.Join(' ', words);
+            }
+
+            var context = new LiveTypingContext(Pick<string?>(random, ["", null, "We shipped it", "Notes:\n"]), Pick(random, [SingleLine, MultiLine]), Live: true, SmartFormatting: random.Next(4) != 0);
+            var typing = new LiveTyping(formatter, context);
+            for (var k = 1; k < phrases.Length; k++)
+            {
+                typing.Update(phrases[..k], phrases[k]);
+                Assert.True(k < 3 || typing.Typed.Length > 0, $"nothing typed after {k} phrases: {Describe(context, phrases)}");
+            }
         }
     }
 
@@ -467,13 +554,21 @@ public class LiveTypingTests
 
     private static readonly FieldInfo[] Fields = [new(), new(MultiLine: true), new(MultiLine: true, Email: true), new(Search: true), new(Password: true)];
 
+    private static readonly string[] Unpunctuated =
+    [
+        "so the demo is ready", "and we can ship it", "on Friday after the review", "with the whole team", "we should talk about the plan",
+        "the build is green", "then we went home", "the release went out", "everyone was happy", "kal office mein meeting hai",
+        "main 5 baje tak aa jaunga", "tum bhi aa jana",
+    ];
+
     private static readonly string[] Plain =
     [
         "We shipped it.", "It was fun.", "The build is green.", "Can you check it?", "See you soon!", "When we shipped it,",
         "the team was happy.", "and then we celebrated.", "so the demo is ready", "can you check it", "we should go",
         "kal office mein meeting hai", "main 5 baje tak aa jaunga", "tum bhi aa jana", "thik hai na", "um", "", "  ", "Ok.",
         "haan to like", "for example,", "for example we could ship it.", "I think", "that's fine.", "new line", "comma",
-        "full stop", "question mark", "I'm so sorry,", "Thanks for the help.",
+        "full stop", "question mark", "I'm so sorry,", "Thanks for the help.", "Um, so the demo is ready",
+        "We shipped it. and then we", "on Friday, after the review", "and had a long meeting",
     ];
 
     private static readonly string[] Rich =
@@ -491,20 +586,21 @@ public class LiveTypingTests
     private static string[] Phrases(Random random, string[] pool) =>
         Enumerable.Range(0, 1 + random.Next(7)).Select(_ => Pick(random, pool)).ToArray();
 
-    /// <summary>Phrase by phrase, the next one being spoken while the ones before have paused; the last one ends it.</summary>
-    private static (string All, bool TypedLive, LiveTyping Typing) TypeLive(DictationFormatter formatter, LiveTypingContext context, string[] phrases)
+    /// <summary>
+    /// Phrase by phrase, the next one being spoken while the ones before have paused; the last one ends it. Returns what
+    /// was typed while speaking and what <see cref="LiveTyping.Finish"/> added.
+    /// </summary>
+    private static (string Live, string AtFinish, LiveTyping Typing) TypeLive(DictationFormatter formatter, LiveTypingContext context, string[] phrases)
     {
         var typing = new LiveTyping(formatter, context);
-        var all = new System.Text.StringBuilder();
+        var live = new System.Text.StringBuilder();
         for (var k = 1; k < phrases.Length; k++)
         {
-            all.Append(typing.Update(phrases[..k], phrases[k]).Type);
-            Assert.Equal(all.ToString(), typing.Typed);
+            live.Append(typing.Update(phrases[..k], phrases[k]).Type);
+            Assert.Equal(live.ToString(), typing.Typed);
         }
 
-        var typedLive = all.Length > 0;
-        all.Append(typing.Finish(phrases));
-        return (all.ToString(), typedLive, typing);
+        return (live.ToString(), typing.Finish(phrases), typing);
     }
 
     private static string Describe(LiveTypingContext context, string[] phrases) =>
