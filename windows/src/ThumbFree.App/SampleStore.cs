@@ -54,11 +54,13 @@ internal sealed class SampleStore
 
     /// <summary>
     /// The privacy rule for samples (PLAN 3.8): never from a password field, and never from a web browser, because a
-    /// browser can't reliably say whether a window is private (<see cref="Browsers"/>). Other desktop apps and
-    /// ThumbFree's own practice boxes (<paramref name="app"/> null) may be kept.
+    /// browser can't reliably say whether a window is private (<see cref="Browsers"/>). Nor from an app whose name
+    /// couldn't be read (empty): it might be a browser. Other desktop apps and ThumbFree's own practice boxes
+    /// (<paramref name="app"/> null) may be kept.
     /// </summary>
-    /// <param name="app">The process name of the app the text went to ("WINWORD"); null for ThumbFree's own boxes.</param>
-    public static bool MayKeep(string? app, bool passwordField) => !passwordField && !Browsers.IsBrowser(app);
+    /// <param name="app">The process name of the app the text went to ("WINWORD"), empty if unreadable; null for ThumbFree's own boxes.</param>
+    public static bool MayKeep(string? app, bool passwordField) =>
+        !passwordField && (app is null || (!string.IsNullOrWhiteSpace(app) && !Browsers.IsBrowser(app)));
 
     /// <summary>
     /// Keeps one dictation, on a background thread, when "Help improve ThumbFree" is on and <see cref="MayKeep"/>
@@ -68,7 +70,10 @@ internal sealed class SampleStore
     /// <param name="audio">The recording: 16 kHz mono, -1 to 1.</param>
     /// <param name="recognized">What the model heard, before formatting.</param>
     /// <param name="typed">What was typed (or kept for copying).</param>
-    /// <param name="app">The process name of the app the text went to ("WINWORD"); null for ThumbFree's own practice boxes.</param>
+    /// <param name="app">
+    /// The process name of the app the text went to ("WINWORD"), empty when it couldn't be read (nothing is kept); null
+    /// for ThumbFree's own practice boxes.
+    /// </param>
     public bool Save(float[] audio, string recognized, string typed, ModelSpec model, bool passwordField, string? app)
     {
         if (!_enabled() || !MayKeep(app, passwordField) || audio.Length == 0)
@@ -202,7 +207,8 @@ internal sealed class SampleStore
     /// <summary>yyyyMMdd-HHmmss-fff, so names sort oldest first (as on Android).</summary>
     private string NewSampleFolder(DateTimeOffset time)
     {
-        var name = time.LocalDateTime.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
+        // The clock's own time (local in the app), so the name doesn't depend on the machine's time zone.
+        var name = time.DateTime.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         var path = Path.Combine(Folder, name);
         for (var i = 2; Directory.Exists(path); i++)
         {

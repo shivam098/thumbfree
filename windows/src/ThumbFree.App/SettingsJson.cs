@@ -40,7 +40,10 @@ internal static class SettingsJson
         var values = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         foreach (var property in document.RootElement.EnumerateObject())
         {
-            values[property.Name] = property.Value.Clone();
+            if (KeyOf(property) is { } key)
+            {
+                values[key] = property.Value.Clone();
+            }
         }
 
         return values;
@@ -94,7 +97,7 @@ internal static class SettingsJson
     }
 
     /// <summary>Where each top-level property's name and value are, and where the braces are.</summary>
-    private static (List<(string Key, int NameStart, int ValueStart, int ValueEnd)> Properties, int Open, int Close) Scan(ReadOnlySpan<byte> json)
+    private static (List<(string? Key, int NameStart, int ValueStart, int ValueEnd)> Properties, int Open, int Close) Scan(ReadOnlySpan<byte> json)
     {
         var reader = new Utf8JsonReader(json, ReaderOptions);
         if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
@@ -103,10 +106,20 @@ internal static class SettingsJson
         }
 
         var open = (int)reader.TokenStartIndex;
-        var properties = new List<(string, int, int, int)>();
+        var properties = new List<(string?, int, int, int)>();
         while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
         {
-            var key = reader.GetString()!;
+            string? key;
+            try
+            {
+                key = reader.GetString();
+            }
+            catch (InvalidOperationException)
+            {
+                // A name that isn't UTF-8 can't be one of ThumbFree's keys: it's kept as it is, like any unknown key.
+                key = null;
+            }
+
             var nameStart = (int)reader.TokenStartIndex;
             reader.Read();
             var valueStart = (int)reader.TokenStartIndex;
@@ -126,7 +139,7 @@ internal static class SettingsJson
     /// <summary>New keys go just before the closing brace, after a comma if the last value has none, indented like the others.</summary>
     private static void AddMissing(
         ReadOnlySpan<byte> json,
-        List<(string Key, int NameStart, int ValueStart, int ValueEnd)> properties,
+        List<(string? Key, int NameStart, int ValueStart, int ValueEnd)> properties,
         int open,
         int close,
         string newline,
@@ -213,6 +226,19 @@ internal static class SettingsJson
     }
 
     private static string Name(string key) => JsonSerializer.Serialize(key);
+
+    /// <summary>A top-level key; null when it isn't UTF-8 (it can't be one of ThumbFree's keys, so it's ignored like any unknown key).</summary>
+    private static string? KeyOf(JsonProperty property)
+    {
+        try
+        {
+            return property.Name;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
 
     private static int Bom(ReadOnlySpan<byte> file) => file.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]) ? 3 : 0;
 

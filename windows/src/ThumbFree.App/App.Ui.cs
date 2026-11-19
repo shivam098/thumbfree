@@ -57,6 +57,9 @@ public partial class App
         services.ShowGuide = ShowGuide;
         services.OpenPage = OpenPage;
         WindowsEnvironment.UpgradeStartupEntry();
+
+        // The browsers registered on this PC are read now, in the background, so no dictation waits for them.
+        Platform.Browsers.Prepare();
         return services;
     }
 
