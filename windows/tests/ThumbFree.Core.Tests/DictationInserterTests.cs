@@ -105,4 +105,68 @@ public class DictationInserterTests
         Assert.True(_inserter.RepeatLast());
         Assert.Equal(["type:Hello there"], _desktop.Actions);
     }
+
+    [Fact]
+    public void No_space_goes_before_punctuation()
+    {
+        // Shared rule (Insertion.WithSpacing): before, this typed " ?" after the word.
+        _desktop.EndsWithText = true;
+        _inserter.Insert("question mark");
+        Assert.Equal(["type:?"], _desktop.Actions);
+    }
+
+    [Fact]
+    public void With_the_field_and_the_text_before_it_the_shared_pipeline_runs()
+    {
+        var multiLine = new FieldInfo(MultiLine: true);
+        LiveTypingContext Context(string? before, FieldInfo field) => new(before, field, Live: true, SmartFormatting: true);
+
+        // The text before decides the space and the lowercase "and", not the desktop's guess.
+        Assert.True(_inserter.Insert("and then we celebrated", Context("We shipped it", multiLine)));
+        Assert.Equal(["type: and then we celebrated"], _desktop.Actions);
+        Assert.Equal("and then we celebrated", _inserter.LastText);
+
+        // Enter in a single-line box would send or search.
+        _desktop.Actions.Clear();
+        _inserter.Insert("first new line second", Context("", new FieldInfo()));
+        Assert.Equal(["type:First Second"], _desktop.Actions);
+
+        _desktop.Actions.Clear();
+        _inserter.Insert("weather in Delhi full stop", Context("", new FieldInfo(Search: true)));
+        Assert.Equal(["type:Weather in Delhi"], _desktop.Actions);
+
+        _desktop.Actions.Clear();
+        _inserter.Insert("my shopping list: milk, eggs, bread and butter.", Context("", multiLine));
+        Assert.Equal(["type:My shopping list:", "keys:Shift+Enter", "type:- Milk.", "keys:Shift+Enter", "type:- Eggs.", "keys:Shift+Enter", "type:- Bread and butter."], _desktop.Actions);
+
+        // Unknown text before: the desktop's answer adds the space, as without a context.
+        _desktop.Actions.Clear();
+        _desktop.EndsWithText = true;
+        _inserter.Insert("see you there", Context(null, multiLine));
+        Assert.Equal(["type: See you there"], _desktop.Actions);
+    }
+
+    [Fact]
+    public void A_password_field_in_the_context_is_refused()
+    {
+        Assert.False(_inserter.Insert("open sesame", new LiveTypingContext("", new FieldInfo(Password: true), Live: true, SmartFormatting: true)));
+        Assert.Empty(_desktop.Actions);
+        Assert.Equal(StatusKind.Warning, _statuses[^1].Kind);
+    }
+
+    [Fact]
+    public void Live_pieces_are_typed_as_given_and_only_problems_are_reported()
+    {
+        _desktop.EndsWithText = true;
+        Assert.True(_inserter.TypePrepared("Hello there."));
+        Assert.True(_inserter.TypePrepared("\n\nThanks,\nBen"));
+        Assert.False(_inserter.TypePrepared(string.Empty));
+        Assert.Equal(["type:Hello there.", "keys:Shift+Enter", "keys:Shift+Enter", "type:Thanks,", "keys:Shift+Enter", "type:Ben"], _desktop.Actions);
+        Assert.Empty(_statuses);
+        Assert.Null(_inserter.LastText);
+
+        _desktop.Field = FieldCheck.Password;
+        Assert.False(_inserter.TypePrepared("more"));
+        Assert.Equal(StatusKind.Warning, _statuses[^1].Kind);
+    }
 }

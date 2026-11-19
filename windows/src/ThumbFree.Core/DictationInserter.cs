@@ -44,10 +44,14 @@ public interface IDesktop
 /// <summary>
 /// Formats dictated speech and inserts it where the cursor is. The key press that started dictation is the user's
 /// consent, so only password fields and administrator windows are refused (see docs/specs in windows-voice-assistant).
+/// Spacing, continuing a sentence and the field rules are the ones every platform shares (<see cref="Insertion"/>,
+/// <see cref="LiveTyping"/>); typing, line breaks as each app's new-line keys and the refusals are Windows' own.
 /// </summary>
 public sealed class DictationInserter
 {
     public const string DefaultNewLineKeys = "Shift+Enter";
+
+    private const string PasswordRefusal = "That's a password field — I won't type there.";
 
     private readonly IDesktop _desktop;
     private readonly DictationFormatter _formatter;
@@ -66,21 +70,64 @@ public sealed class DictationInserter
 
     public event Action<StatusUpdate>? Status;
 
-    /// <summary>The last inserted text, for “paste last dictation”. Kept only in memory.</summary>
-    public string? LastText { get; private set; }
+    /// <summary>
+    /// The last dictation, for “paste last dictation”, without the space that joined it to the text before. Kept only in
+    /// memory. After a dictation typed live, set it to <see cref="LiveTyping.Text"/>.
+    /// </summary>
+    public string? LastText { get; set; }
 
     /// <summary>Formats the transcript and inserts it at the cursor. Returns false if nothing was inserted.</summary>
-    public bool Insert(string transcript)
+    /// <param name="transcript">What was said (word list already applied).</param>
+    /// <param name="context">
+    /// The field and the text before the cursor, as found when dictation started. With it the whole shared pipeline runs,
+    /// exactly as <see cref="LiveTyping"/> finishes a dictation that wasn't typed live: continuing the sentence, smart
+    /// formatting, the field's rules (no line breaks in single-line boxes, no full stop in search boxes) and spacing.
+    /// Without it only the formatter runs and the field is treated as multi-line.
+    /// </param>
+    public bool Insert(string transcript, LiveTypingContext? context = null)
     {
-        var formatted = _formatter.Format(transcript);
-        if (formatted.Length == 0)
+        var heard = TranscriptText.Clean(transcript);
+        if (context?.Field.Password == true)
+        {
+            Report(StatusKind.Warning, PasswordRefusal, heard);
+            return false;
+        }
+
+        string text;
+        string remembered;
+        if (context is null)
+        {
+            text = remembered = _formatter.Format(transcript);
+        }
+        else
+        {
+            var typing = new LiveTyping(_formatter, context with { Live = false });
+            text = typing.Finish([transcript]);
+            remembered = typing.Text;
+        }
+
+        if (text.Length == 0)
         {
             Report(StatusKind.Info, "I didn't catch anything to type.");
             return false;
         }
 
-        return InsertFormatted(formatted, TranscriptText.Clean(transcript));
+        if (!Type(text, addSpace: context?.TextBefore is null, heard))
+        {
+            return false;
+        }
+
+        LastText = remembered;
+        Report(StatusKind.Success, "Typed.", heard);
+        return true;
     }
+
+    /// <summary>
+    /// Types text that is already final, such as a piece from <see cref="LiveTyping"/> (formatted and spaced): line breaks
+    /// become the app's new-line keys. The same refusals as <see cref="Insert"/>, but only problems are reported, so the
+    /// pill isn't flooded while speaking. Returns false if nothing was typed.
+    /// </summary>
+    public bool TypePrepared(string text) => text.Length > 0 && Type(text, addSpace: false, heard: null);
 
     /// <summary>Inserts the last dictated text again.</summary>
     public bool RepeatLast()
@@ -91,10 +138,16 @@ public sealed class DictationInserter
             return false;
         }
 
-        return InsertFormatted(LastText, null);
+        if (!Type(LastText, addSpace: true, heard: null))
+        {
+            return false;
+        }
+
+        Report(StatusKind.Success, "Typed.");
+        return true;
     }
 
-    private bool InsertFormatted(string formatted, string? heard)
+    private bool Type(string text, bool addSpace, string? heard)
     {
         var window = _desktop.GetForegroundWindow();
         if (window is null)
@@ -105,7 +158,7 @@ public sealed class DictationInserter
 
         var refusal = _desktop.CheckFocusedField() switch
         {
-            FieldCheck.Password => "That's a password field — I won't type there.",
+            FieldCheck.Password => PasswordRefusal,
             FieldCheck.Elevated => "That window runs as administrator; Windows won't let me type into it.",
             _ => null,
         };
@@ -115,9 +168,14 @@ public sealed class DictationInserter
             return false;
         }
 
-        var leadingSpace = _desktop.FocusedTextEndsWithNonWhitespace() == true && formatted[0] != '\n';
+        // Only whether the field ends in a word is known here, so the space goes before anything but punctuation.
+        if (addSpace && _desktop.FocusedTextEndsWithNonWhitespace() == true && !Insertion.StartsAttached(text))
+        {
+            text = " " + text;
+        }
+
         var newLine = _newLineKeys.GetValueOrDefault(window.ProcessName, DefaultNewLineKeys);
-        var parts = (leadingSpace ? " " + formatted : formatted).Split('\n');
+        var parts = text.Split('\n');
         for (var i = 0; i < parts.Length; i++)
         {
             if (i > 0)
@@ -131,8 +189,6 @@ public sealed class DictationInserter
             }
         }
 
-        LastText = formatted;
-        Report(StatusKind.Success, "Typed.", heard);
         return true;
     }
 
