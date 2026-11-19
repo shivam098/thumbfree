@@ -36,10 +36,13 @@ android/
                  keyboard opens fast. sherpa-onnx comes from its official AAR (2.0.1, ONNX Runtime linked in),
                  downloaded by Gradle and pinned by SHA-256.
 third_party/whisper.cpp   git submodule, pinned to v1.9.5
-tests/vectors/formatter.tsv   inputs and expected outputs generated from the C# reference formatter
+tests/vectors/formatter.tsv   inputs and expected outputs generated from the C# reference formatter (thumbfree-windows)
 tests/vectors/layout.tsv      emails, lists and corrections (formatter + layout), checked on the JVM and on a device
 tests/audio/                  short speech clips for the on-device tests
 ```
+
+`tests/vectors` and `tests/audio` are the same files in every ThumbFree repo (android, windows, mac, ios); the **Test
+data in sync** check fails while any copy differs.
 
 ## How a dictation flows
 
@@ -151,8 +154,8 @@ through `SampleProvider`; there is no upload code.
 You need JDK 17 and the Android SDK + NDK (Android Studio installs both).
 
 ```sh
-git clone --recurse-submodules https://github.com/shivam098/thumbfree
-cd thumbfree/android
+git clone --recurse-submodules https://github.com/shivam098/thumbfree-android
+cd thumbfree-android/android
 ./gradlew :core:test            # core logic and formatter vectors (no SDK needed: THUMBFREE_CORE_ONLY=1)
 ./gradlew :app:assembleDebug    # app/build/outputs/apk/debug/ThumbFree-0.1.0-debug.apk
 ```

@@ -1,0 +1,48 @@
+name: Test data in sync
+
+# tests/vectors (expected formatting) and tests/audio (speech recordings) are the same files in every ThumbFree app:
+# thumbfree-android, thumbfree-windows, thumbfree-mac and thumbfree-ios. This fails while any copy differs from this
+# one, so a change made in one repo gets copied to the others. It also runs daily, because a change in another repo
+# shows up here only on the next run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ["tests/vectors/**", "tests/audio/**", ".github/workflows/test-data.yml"]
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: Same test data as the other ThumbFree apps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare tests/vectors and tests/audio with the other repos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          here="${GITHUB_REPOSITORY#*/}"
+          # One line per file: its git blob id (a hash of the content) and its path.
+          git ls-tree -r HEAD -- tests/vectors tests/audio | awk '{print $3, $4}' | sort > here.txt
+          if [ ! -s here.txt ]; then echo "::error::No tests/vectors or tests/audio here."; exit 1; fi
+          status=0
+          for repo in thumbfree-android thumbfree-windows thumbfree-mac thumbfree-ios; do
+            [ "$repo" = "$here" ] && continue
+            gh api "repos/shivam098/$repo/git/trees/main?recursive=1" \
+              --jq '.tree[] | select(.type == "blob" and ((.path | startswith("tests/vectors/")) or (.path | startswith("tests/audio/")))) | "\(.sha) \(.path)"' \
+              | sort > there.txt
+            if diff -u --label "$here" --label "$repo" here.txt there.txt; then
+              echo "Same as shivam098/$repo."
+            else
+              echo "::error::tests/vectors or tests/audio differs from shivam098/$repo (- here, + there). Copy the change to every ThumbFree repo."
+              status=1
+            fi
+          done
+          exit $status

@@ -1,7 +1,7 @@
 name: Release
 
-# One product version, one GitHub release, files for every platform (docs/PLAN.md 6). Each platform builds in its own
-# job; the release is created once, at the end, with all of them and one SHA256SUMS.txt.
+# A tag v* builds the signed Android APKs and the Play bundle, and publishes them in one GitHub release with
+# SHA256SUMS.txt. The other platforms release from their own repos (docs/PLAN.md 5).
 on:
   push:
     tags: ["v*"]
@@ -63,33 +63,9 @@ jobs:
           name: android
           path: dist/*
 
-  windows:
-    name: Windows zips (x64 and ARM64)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-      - name: The app's version matches the tag
-        shell: pwsh
-        run: |
-          $tag = '${{ github.ref_name }}'.TrimStart('v')
-          $version = ([xml](Get-Content windows/src/ThumbFree.App/ThumbFree.App.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-          if ($version -ne $tag) { Write-Error "ThumbFree.App.csproj says $version but the tag is $tag"; exit 1 }
-      - name: Tests
-        run: dotnet test windows/ThumbFree.slnx -c Release
-      - name: Package (with the Visual C++ runtime)
-        shell: pwsh
-        run: ./windows/scripts/package.ps1 -RequireVcRuntime
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows
-          path: windows/dist/*.zip
-
   publish:
     name: GitHub release
-    needs: [android, windows]
+    needs: [android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -105,9 +81,7 @@ jobs:
           pre=""
           case "$version" in 0.*|*-*) pre="--prerelease";; esac
           cat > notes.md <<EOF
-          **Windows:** \`ThumbFree-${version}-win-x64.zip\` for Intel and AMD PCs, \`ThumbFree-${version}-win-arm64.zip\` for Snapdragon and other ARM PCs. Unzip, run \`ThumbFree.exe\`, then tap Ctrl+Win to dictate.
-
-          **Android, which APK?**
+          **Which APK?**
           - \`ThumbFree-${version}.apk\`: install this one. Everything except the bubble.
           - \`ThumbFree-${version}-with-bubble.apk\`: adds the floating bubble (dictate with any keyboard). It uses an accessibility service, so Google Play Protect blocks installing it from a browser or file manager in some countries (India). Install it with \`adb install\`, or wait for the Play Store release.
           - \`ThumbFree-${version}-google-play.aab\`: the bubble edition as an app bundle, for uploading to Google Play (not for installing).
