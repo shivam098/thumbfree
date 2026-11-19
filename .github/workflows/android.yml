@@ -1,9 +1,12 @@
 name: Android
 
+# Windows-only changes don't need the Android build and emulator run.
 on:
   push:
     branches: [main]
+    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml", ".github/workflows/release-windows.yml"]
   pull_request:
+    paths-ignore: ["windows/**", "docs/windows.md", ".github/workflows/windows.yml", ".github/workflows/release-windows.yml"]
   workflow_dispatch:
 
 concurrency:
