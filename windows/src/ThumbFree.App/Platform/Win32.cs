@@ -133,6 +133,13 @@ internal static partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, nint lParam);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumChildWindows(nint parent, EnumWindowsProc lpEnumFunc, nint lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(nint hWnd, StringBuilder className, int maxCount);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(nint hWnd, StringBuilder text, int maxCount);
 
@@ -183,6 +190,27 @@ internal static partial class Win32
         var sb = new StringBuilder(512);
         GetWindowText(hWnd, sb, sb.Capacity);
         return sb.ToString();
+    }
+
+    /// <summary>The child windows of <paramref name="parent"/>, at any depth, whose window class is <paramref name="className"/>.</summary>
+    public static List<nint> FindChildWindows(nint parent, string className)
+    {
+        var found = new List<nint>();
+        var name = new StringBuilder(256);
+        EnumChildWindows(
+            parent,
+            (child, _) =>
+            {
+                name.Clear();
+                if (GetClassName(child, name, name.Capacity) > 0 && name.ToString() == className)
+                {
+                    found.Add(child);
+                }
+
+                return true;
+            },
+            0);
+        return found;
     }
 
     public static bool IsCloaked(nint hWnd) =>

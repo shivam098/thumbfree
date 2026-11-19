@@ -44,8 +44,8 @@ internal sealed class WindowsDesktop : IDesktop
 
         try
         {
-            var check = Task.Run(() => Check(Focused()));
-            return check.Wait(800) ? check.Result : FieldCheck.Unknown;
+            var check = Task.Run(() => Check(FocusInspector.FocusedElement()));
+            return check.Wait(2000) ? check.Result : FieldCheck.Unknown;
         }
         catch (AggregateException)
         {
@@ -57,8 +57,8 @@ internal sealed class WindowsDesktop : IDesktop
     {
         try
         {
-            var check = Task.Run(() => HasTrailingText(Focused()));
-            return check.Wait(600) ? check.Result : null;
+            var check = Task.Run(() => HasTrailingText(FocusInspector.FocusedElement()));
+            return check.Wait(2000) ? check.Result : null;
         }
         catch (AggregateException)
         {
@@ -100,18 +100,6 @@ internal sealed class WindowsDesktop : IDesktop
         catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or System.Runtime.InteropServices.COMException)
         {
             return FieldCheck.Unknown;
-        }
-    }
-
-    private static AutomationElement? Focused()
-    {
-        try
-        {
-            return AutomationElement.FocusedElement;
-        }
-        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or System.Runtime.InteropServices.COMException)
-        {
-            return null;
         }
     }
 

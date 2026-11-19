@@ -99,8 +99,9 @@ Open ThumbFree from the Start menu or the tray icon. The **Settings** page has:
 
 Changes apply straight away.
 
-The settings file is `%APPDATA%\ThumbFree\settings.json`. Edits by hand are kept, and so are comments. If the file
-has a mistake, Home and Settings say which line, and ThumbFree doesn't overwrite it. These options are only in the
+The settings file is `%APPDATA%\ThumbFree\settings.json`. Edits by hand are kept, and so are comments, except
+comments inside the personal dictionary (`"replacements"`) when you change the dictionary on the Settings page. If the
+file has a mistake, Home and Settings say which line, and ThumbFree doesn't overwrite it. These options are only in the
 file, and need a restart:
 
 ```json
@@ -133,6 +134,9 @@ file, and need a restart:
   At most 300 dictations (150 MB) are kept. **Delete all** removes them.
 - The internet is used only to download speech models. Logs (`%LOCALAPPDATA%\ThumbFree\logs`) hold timings and error
   names, never your words.
+- **Chrome, Edge and apps built on them** (VS Code, Slack, Teams, the new Outlook) only tell other apps about the text
+  box you're in once their accessibility support is on. Your first dictation into one of them turns it on, as Narrator
+  and Voice Access do. It stays on until that app restarts, which costs the app a little speed on big pages.
 
 ## Troubleshooting
 

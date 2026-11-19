@@ -419,6 +419,11 @@ plus a keyboard extension that work together**, the same way Wispr Flow does it 
     search and address bars, email apps and webmail, the text before the cursor). Before each piece is typed, the
     same window and the same element must have the focus; otherwise nothing more is typed and the whole dictation goes
     to the tap-to-copy notification (3.6).
+  - Chromium (Chrome, Edge, Electron and WebView2 apps) builds its pages' accessibility tree only after a UI
+    Automation client reads a property of the page itself; until then the focus is just the browser's pane. So the
+    first dictation into such an app reads one property of each page's root (`Chrome_RenderWidgetHostHWND`), then
+    waits up to 1.2 s for the real text box, once per app process. Without this, password fields in a fresh Chrome
+    weren't detected.
   - Recognition runs on one speech thread; a model loads when a dictation needs it (audio is kept meanwhile) and is
     unloaded after 3 idle minutes.
   - Silero (whisper.cpp's VAD) finds the pauses for Whisper and Parakeet: phrases end at 0.7 s, and long dictation is

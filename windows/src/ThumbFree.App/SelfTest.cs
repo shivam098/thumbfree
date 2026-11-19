@@ -343,8 +343,8 @@ internal static class SelfTest
     {
         try
         {
-            var task = Task.Run(() => AutomationElement.FocusedElement?.Current.Name ?? string.Empty);
-            return task.Wait(2000) ? task.Result : string.Empty;
+            var task = Task.Run(() => Platform.FocusInspector.FocusedElement()?.Current.Name ?? string.Empty);
+            return task.Wait(3000) ? task.Result : string.Empty;
         }
         catch (AggregateException)
         {
@@ -358,7 +358,12 @@ internal static class SelfTest
         {
             var task = Task.Run(() =>
             {
-                var e = AutomationElement.FocusedElement;
+                var e = Platform.FocusInspector.FocusedElement();
+                if (e is null)
+                {
+                    return ("(none)", string.Empty);
+                }
+
                 var type = e.Current.ControlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal);
                 if (e.TryGetCurrentPattern(ValuePattern.Pattern, out var v))
                 {
@@ -372,7 +377,7 @@ internal static class SelfTest
 
                 return (type, string.Empty);
             });
-            return task.Wait(2000) ? task.Result : ("(timeout)", string.Empty);
+            return task.Wait(3000) ? task.Result : ("(timeout)", string.Empty);
         }
         catch (Exception ex)
         {
