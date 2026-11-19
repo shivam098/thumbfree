@@ -141,11 +141,23 @@ public class SharedCoreTests
         Assert.Equal("Hello", Insertion.WithSpacing("Hi ", "Hello"));
         Assert.Equal(", right?", Insertion.WithSpacing("ok", ", right?"));
         Assert.Equal("mail", Insertion.WithSpacing("@", "mail"));
+
+        // Text that already starts with whitespace (a line break turned into a space) gets no second one.
+        Assert.Equal(" Hello", Insertion.WithSpacing("Hi", " Hello"));
         Assert.True(Insertion.ContinuesSentence("We shipped it"));
         Assert.False(Insertion.ContinuesSentence("We shipped it. "));
         Assert.False(Insertion.ContinuesSentence(""));
         Assert.False(Insertion.ContinuesSentence(null));
         Assert.False(Insertion.ContinuesSentence("Dear John,\n"));
+
+        // However the app reports a line end.
+        foreach (var lineEnd in new[] { "\r\n", "\r", "\v", "\u2028", "\u2029" })
+        {
+            Assert.False(Insertion.ContinuesSentence("Dear John," + lineEnd));
+        }
+
+        Assert.Equal("a\nb\nc\nd\ne\nf\n", Insertion.NormalizeLineEnds("a\r\nb\rc\vd\u2028e\u2029f\n"));
+        Assert.Null(Insertion.NormalizeLineEnds(null));
         Assert.Equal("a b", Insertion.ForField("a\nb", new FieldInfo(false, false, false, false)));
         Assert.Equal("a\nb", Insertion.ForField("a\nb", new FieldInfo(false, false, true, false)));
     }
@@ -178,8 +190,12 @@ public class SharedCoreTests
         LiveTyping Typing(FieldInfo field) => new(formatter, new LiveTypingContext("", field, Live: true, SmartFormatting: true));
 
         var password = Typing(new FieldInfo(Password: true));
-        Assert.Equal(string.Empty, password.Update(["my secret is", "open sesame"], string.Empty).Type);
+        var step = password.Update(["my secret is", "open sesame"], "and more");
+        Assert.Equal(string.Empty, step.Type);
+        Assert.Equal(string.Empty, step.Pending);
         Assert.True(password.HoldsAll);
+        Assert.Equal(string.Empty, password.Finish(["my secret is", "open sesame"]));
+        Assert.Equal(string.Empty, password.FinalText);
 
         // Search boxes: no full stop and no smart formatting.
         Assert.Equal("Weather in Delhi", Typing(new FieldInfo(Search: true)).Finish(["weather in Delhi."]));

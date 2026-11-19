@@ -43,12 +43,36 @@ public class LiveTypingTests
     public void A_correction_after_a_pause_changes_the_phrase_before_it_is_typed()
     {
         var d = new Dictation("", MultiLine);
-        Assert.Equal("", d.Pause("let's meet on Friday at 3 pm"));
-        Assert.Equal("", d.Pause("actually 4 pm"));
-        Assert.Equal("Let's meet on Friday at 4 pm", d.Pending);
-        Assert.Equal("Let's meet on Friday at 4 pm", d.Pause("in the big room."));
-        Assert.Equal(" in the big room.", d.Finish());
+        Assert.Equal("", d.Pause("Let's meet on Friday at 3 pm,"));
+        Assert.Equal("", d.Pause("actually 4 pm."));
+        Assert.Equal("Let's meet on Friday at 4 pm.", d.Pending);
+        Assert.Equal("Let's meet on Friday at 4 pm.", d.Pause("In the big room."));
+        Assert.Equal(" In the big room.", d.Finish());
         Assert.DoesNotContain(d.Pieces, p => p.Contains("3 pm"));
+    }
+
+    [Theory]
+    [InlineData("sorry,")]
+    [InlineData("actually,")]
+    [InlineData("I mean")]
+    [InlineData("no wait")]
+    public void A_correction_marker_in_a_phrase_of_its_own_waits_for_the_new_value(string marker)
+    {
+        var d = new Dictation("", SingleLine);
+        Assert.Equal("", d.Pause("Meet me at the cafe at 6,"));
+        Assert.Equal("", d.Pause(marker));
+        Assert.Equal("", d.Pause("7 tonight."));
+        Assert.Equal("Meet me at the cafe at 7 tonight. See you there.", d.Finish("See you there."));
+        Assert.Equal(d.All, AtTheEnd(d));
+    }
+
+    [Fact]
+    public void An_apology_at_the_end_of_a_phrase_does_not_hold_typing()
+    {
+        // Only a marker after a time, day or number can take a new value.
+        var d = new Dictation("", SingleLine);
+        Assert.Equal("", d.Pause("We missed the bus."));
+        Assert.Equal("We missed the bus.", d.Pause("I'm so sorry,"));
     }
 
     [Fact]
@@ -69,6 +93,38 @@ public class LiveTypingTests
         Assert.Equal("I'll email you.", d.Pause("talk soon."));
         Assert.Equal(" Talk soon.", d.Finish());
         Assert.DoesNotContain(d.Pieces, p => p.Contains("call"));
+    }
+
+    [Fact]
+    public void An_unfinished_sentence_waits_while_scratch_that_could_still_drop_it()
+    {
+        var d = new Dictation("", SingleLine);
+        Assert.Equal("", d.Pause("I'll call you"));
+        Assert.Equal("", d.Pause("tomorrow."));
+        Assert.Equal("I'll email you tonight.", d.Finish("Scratch that. I'll email you tonight."));
+
+        // Sentences before it are typed; the one "scratch that" can drop waits.
+        var e = new Dictation("", SingleLine);
+        Assert.Equal("", e.Pause("We shipped it."));
+        Assert.Equal("We shipped it.", e.Pause("I'll call you"));
+        Assert.Equal("", e.Pause("tomorrow."));
+        Assert.Equal("", e.Pause("Scratch that."));
+        Assert.Equal(" I'll email you tonight.", e.Finish("I'll email you tonight."));
+        Assert.Equal("We shipped it. I'll email you tonight.", e.All);
+        Assert.Equal(e.All, AtTheEnd(e));
+    }
+
+    [Fact]
+    public void Without_written_punctuation_scratch_that_two_phrases_later_cannot_take_back_typed_text()
+    {
+        // The documented limit: unpunctuated speech has no boundary to hold back to, so phrases are typed as before.
+        var d = new Dictation("", SingleLine);
+        Assert.Equal("", d.Pause("kal call karunga"));
+        Assert.Equal("Kal call karunga", d.Pause("parso milte hain"));
+        Assert.Equal("", d.Pause("scratch that"));
+        Assert.Equal(" Email karunga", d.Finish("email karunga"));
+        Assert.True(d.Typing.FinishedWithoutLayout);
+        Assert.Equal("Email karunga", AtTheEnd(d));
     }
 
     [Fact]
@@ -138,15 +194,37 @@ public class LiveTypingTests
     }
 
     [Fact]
+    public void A_list_that_starts_in_a_later_phrase_is_held_while_nothing_is_typed()
+    {
+        var row = Vectors.Rows("layout.tsv").Select(r => r.Split('\t')).First(c => c[1].StartsWith("My plan:", StringComparison.Ordinal));
+        string[] phrases = ["My plan:", "first, book the flights,", "second, find a hotel,", "and third, pack the bags."];
+        Assert.Equal(row[1], string.Join(' ', phrases));
+
+        var d = new Dictation("", MultiLine);
+        Assert.Equal("", d.Pause(phrases[0]));
+        Assert.False(d.Typing.HoldsAll);
+        Assert.Equal("", d.Pause(phrases[1]));
+        Assert.True(d.Typing.HoldsAll);
+        Assert.Equal("", d.Pause(phrases[2]));
+        Assert.Equal(Vectors.Unescape(row[2]), d.Finish(phrases[3]));
+
+        var bullets = new Dictation("", MultiLine);
+        Assert.Equal("", bullets.Pause("Meeting notes."));
+        Assert.Equal("", bullets.Pause("Bullet point launch moved to Friday."));
+        Assert.Equal("Meeting notes:\n- Launch moved to Friday.\n- Priya owns the docs.", bullets.Finish("Bullet point Priya owns the docs."));
+    }
+
+    [Fact]
     public void A_list_started_after_typed_text_is_laid_out_after_it()
     {
         var d = new Dictation("", MultiLine);
         Assert.Equal("", d.Pause("Meeting notes."));
-        Assert.Equal("Meeting notes.", d.Pause("Bullet point launch moved to Friday."));
+        Assert.Equal("Meeting notes.", d.Pause("Two things."));
+        Assert.Equal(" Two things.", d.Pause("Bullet point launch moved to Friday."));
         Assert.Equal("", d.Pause("Bullet point Priya owns the docs."));
         Assert.Equal("\n- Launch moved to Friday.\n- Priya owns the docs.", d.Finish());
         Assert.True(d.Typing.FinishedWithoutLayout);
-        Assert.Equal("Meeting notes.\n- Launch moved to Friday.\n- Priya owns the docs.", d.All);
+        Assert.Equal("Meeting notes. Two things.\n- Launch moved to Friday.\n- Priya owns the docs.", d.All);
     }
 
     [Fact]
@@ -154,25 +232,46 @@ public class LiveTypingTests
     {
         var d = new Dictation("", MultiLine);
         Assert.Equal("", d.Pause("We have a plan."));
-        Assert.Equal("We have a plan.", d.Pause("First, we book the flights."));
+        Assert.Equal("We have a plan.", d.Pause("It's simple."));
+        Assert.Equal(" It's simple.", d.Pause("First, we book the flights."));
         Assert.Equal(" First, we book the flights.", d.Pause("Second, we find a hotel."));
 
         // The third item would make it a numbered list, changing what's typed: from here it waits.
         Assert.Equal("", d.Pause("And third, we pack the bags."));
         Assert.Equal(" Second, we find a hotel. And third, we pack the bags.", d.Finish());
         Assert.True(d.Typing.FinishedWithoutLayout);
-        Assert.Equal("We have a plan. First, we book the flights. Second, we find a hotel. And third, we pack the bags.", d.All);
+        Assert.False(d.Typing.PhrasesChanged);
+        Assert.Equal("We have a plan. It's simple. First, we book the flights. Second, we find a hotel. And third, we pack the bags.", d.All);
         Assert.Equal(d.All, d.Typing.Typed);
+    }
+
+    [Fact]
+    public void Phrases_that_do_not_begin_with_the_typed_ones_type_nothing_more()
+    {
+        var d = new Dictation("", MultiLine);
+        d.Pause("We have a plan.");
+        Assert.Equal("We have a plan.", d.Pause("It's simple."));
+
+        // Against the contract: the app sends other phrases at the end. Typing more could repeat or garble what's there.
+        Assert.Equal("", d.Typing.Finish(["We have another plan.", "It's simple."]));
+        Assert.True(d.Typing.PhrasesChanged);
+        Assert.Equal("We have another plan. It's simple.", d.Typing.FinalText);
+        Assert.Equal("We have a plan.", d.Typing.Typed);
     }
 
     [Fact]
     public void A_single_line_field_gets_spaces_for_spoken_new_lines()
     {
         var d = new Dictation("", SingleLine);
-        Assert.Equal("", d.Pause("first point new line"));
-        Assert.Equal("First point ", d.Pause("second point."));
-        Assert.Equal("Second point.", d.Finish());
-        Assert.Equal("First point Second point.", d.All);
+        Assert.Equal("", d.Pause("First point."));
+        Assert.Equal("", d.Pause("New line, second point."));
+        Assert.Equal("First point Second point.", d.Pause("Third point."));
+        Assert.Equal(" Third point.", d.Finish());
+        Assert.DoesNotContain('\n', d.All);
+
+        // A line break at the start becomes the joining space, not a second one.
+        var e = new Dictation("We shipped it", SingleLine);
+        Assert.Equal(" It was fun.", e.Finish("new line it was fun."));
     }
 
     [Fact]
@@ -180,7 +279,7 @@ public class LiveTypingTests
     {
         var d = new Dictation("", new FieldInfo(Search: true));
         Assert.Equal("", d.Pause("weather in Delhi"));
-        Assert.Equal("Weather in Delhi", d.Pause("this weekend."));
+        Assert.Equal("Weather in Delhi", d.Pause("this weekend full stop"));
         Assert.Equal(" this weekend", d.Finish());
     }
 
@@ -231,17 +330,45 @@ public class LiveTypingTests
     }
 
     [Fact]
+    public void A_phrase_more_words_would_still_drop_is_not_typed()
+    {
+        // "thik hai na" alone is kept, but before more words it's a tag and dropped. The first one matched the kept second
+        // one, so the text with the next phrase alone wasn't enough to tell.
+        var d = new Dictation("", MultiLine);
+        Assert.Equal("", d.Pause("thik hai na"));
+        Assert.Equal("", d.Pause("thik hai na"));
+        Assert.Equal("", d.Pause("I think"));
+        Assert.Equal("I think we should go", d.Finish("we should go"));
+    }
+
+    [Fact]
     public void Empty_and_filler_only_phrases_are_ignored()
     {
         var d = new Dictation("", SingleLine);
-        Assert.Equal("", d.Pause("see you on Friday at 3 pm"));
+        Assert.Equal("", d.Pause("See you on Friday at 3 pm,"));
         Assert.Equal("", d.Pause(""));
         Assert.Equal("", d.Pause("um"));
-        Assert.Equal("", d.Pause("sorry, 4 pm"));
+        Assert.Equal("", d.Pause("sorry, 4 pm."));
         Assert.Equal("", d.Pause("  "));
-        Assert.Equal("See you on Friday at 4 pm", d.Pause("bye."));
+        Assert.Equal("See you on Friday at 4 pm.", d.Pause("Bye."));
         Assert.Equal(5, d.Typing.TypedPhrases);
-        Assert.Equal(" bye.", d.Finish());
+        Assert.Equal(" Bye.", d.Finish());
+    }
+
+    [Theory]
+    [InlineData("\r\n")]
+    [InlineData("\r")]
+    [InlineData("\v")]
+    [InlineData("\u2028")]
+    [InlineData("\u2029")]
+    public void Line_ends_from_the_app_count_as_new_lines(string lineEnd)
+    {
+        Assert.Equal("And then we met.", new Dictation("Dear John," + lineEnd, MultiLine).Finish("and then we met."));
+
+        // Already on a line of its own: no blank line before the list.
+        Assert.Equal(
+            "Things to do today:\n- Order groceries.\n- Go on a walk.\n- Call mom.",
+            new Dictation("Notes" + lineEnd, MultiLine).Finish("things to do today: order groceries, go on a walk and call mom."));
     }
 
     [Fact]
@@ -286,10 +413,112 @@ public class LiveTypingTests
         Assert.False(Layout.MayLayOut("Things to do today", new LayoutContext(MultiLine: false, AtStart: true, Email: true)));
     }
 
+    /// <summary>
+    /// Typing live doesn't change the outcome unless <see cref="LiveTyping.FinishedWithoutLayout"/> says so: over
+    /// generated dictations (fixed seed), the pieces typed while speaking plus <see cref="LiveTyping.Finish"/> equal the
+    /// same dictation typed at the end.
+    /// </summary>
+    [Fact]
+    public void Typing_live_ends_with_the_text_typed_at_the_end()
+    {
+        var random = new Random(310);
+        var formatter = new DictationFormatter();
+        int typedLive = 0, apart = 0;
+        const int Runs = 3000;
+        for (var n = 0; n < Runs; n++)
+        {
+            var context = new LiveTypingContext(Pick(random, Befores), Pick(random, Fields), Live: true, SmartFormatting: random.Next(4) != 0);
+            var phrases = Phrases(random, Rich);
+            var (all, live, typing) = TypeLive(formatter, context, phrases);
+            typedLive += live ? 1 : 0;
+            Assert.False(typing.PhrasesChanged);
+            if (typing.FinishedWithoutLayout)
+            {
+                apart++;
+                continue;
+            }
+
+            var atEnd = new LiveTyping(formatter, context with { Live = false }).Finish(phrases);
+            Assert.True(atEnd == all, $"{Describe(context, phrases)}\n  live:   {Vectors.Escape(all)}\n  at end: {Vectors.Escape(atEnd)}");
+        }
+
+        // Not true by holding everything back: most dictations type something while speaking, and few end apart.
+        Assert.True(typedLive > Runs / 3, $"only {typedLive} of {Runs} typed anything live");
+        Assert.True(apart < Runs / 20, $"{apart} of {Runs} ended apart");
+    }
+
+    /// <summary>Plain speech (no corrections, "scratch that", lists or emails) always ends like the dictation typed at the end.</summary>
+    [Fact]
+    public void Plain_speech_never_ends_apart()
+    {
+        var random = new Random(311);
+        var formatter = new DictationFormatter();
+        for (var n = 0; n < 1500; n++)
+        {
+            var context = new LiveTypingContext(Pick(random, Befores), Pick(random, Fields), Live: true, SmartFormatting: random.Next(4) != 0);
+            var phrases = Phrases(random, Plain);
+            var (all, _, typing) = TypeLive(formatter, context, phrases);
+            var atEnd = new LiveTyping(formatter, context with { Live = false }).Finish(phrases);
+            Assert.True(!typing.FinishedWithoutLayout && atEnd == all, $"{Describe(context, phrases)}\n  live:   {Vectors.Escape(all)}\n  at end: {Vectors.Escape(atEnd)}");
+        }
+    }
+
+    private static readonly string?[] Befores = ["", null, "We shipped it", "Notes:\n", "Done. ", "Hello\r\n", "(", "line one\u2028", "  ", "Dear John,"];
+
+    private static readonly FieldInfo[] Fields = [new(), new(MultiLine: true), new(MultiLine: true, Email: true), new(Search: true), new(Password: true)];
+
+    private static readonly string[] Plain =
+    [
+        "We shipped it.", "It was fun.", "The build is green.", "Can you check it?", "See you soon!", "When we shipped it,",
+        "the team was happy.", "and then we celebrated.", "so the demo is ready", "can you check it", "we should go",
+        "kal office mein meeting hai", "main 5 baje tak aa jaunga", "tum bhi aa jana", "thik hai na", "um", "", "  ", "Ok.",
+        "haan to like", "for example,", "for example we could ship it.", "I think", "that's fine.", "new line", "comma",
+        "full stop", "question mark", "I'm so sorry,", "Thanks for the help.",
+    ];
+
+    private static readonly string[] Rich =
+    [
+        .. Plain,
+        "Meet me at the cafe at 6,", "sorry,", "actually", "I mean,", "no wait", "7 tonight.", "Friday at 3 pm", "actually 4 pm.",
+        "on Monday, sorry, Tuesday.", "make it 5.", "scratch that.", "Scratch that, I'll email you.", "scratch that",
+        "Things to do today:", "My plan:", "first, book the flights,", "second, find a hotel,", "and third, pack the bags.",
+        "bullet point milk", "bullet point eggs", "next bullet bread", "order groceries, go on a walk,", "and call mom.",
+        "Hey Tim,", "Hi Sam, the report is attached.", "Thanks, Ben.", "Best regards, Priya Sharma.", "Cheers!",
+    ];
+
+    private static T Pick<T>(Random random, T[] items) => items[random.Next(items.Length)];
+
+    private static string[] Phrases(Random random, string[] pool) =>
+        Enumerable.Range(0, 1 + random.Next(7)).Select(_ => Pick(random, pool)).ToArray();
+
+    /// <summary>Phrase by phrase, the next one being spoken while the ones before have paused; the last one ends it.</summary>
+    private static (string All, bool TypedLive, LiveTyping Typing) TypeLive(DictationFormatter formatter, LiveTypingContext context, string[] phrases)
+    {
+        var typing = new LiveTyping(formatter, context);
+        var all = new System.Text.StringBuilder();
+        for (var k = 1; k < phrases.Length; k++)
+        {
+            all.Append(typing.Update(phrases[..k], phrases[k]).Type);
+            Assert.Equal(all.ToString(), typing.Typed);
+        }
+
+        var typedLive = all.Length > 0;
+        all.Append(typing.Finish(phrases));
+        return (all.ToString(), typedLive, typing);
+    }
+
+    private static string Describe(LiveTypingContext context, string[] phrases) =>
+        $"before={(context.TextBefore is null ? "null" : Vectors.Escape(context.TextBefore))} field={context.Field} smart={context.SmartFormatting}\n  phrases: {string.Join(" | ", phrases)}";
+
+    /// <summary>The same dictation typed at the end.</summary>
+    private static string AtTheEnd(Dictation d) => new LiveTyping(new DictationFormatter(), d.Context with { Live = false }).Finish(d.Finished);
+
     /// <summary>A dictation as the app drives it: each phrase is spoken word by word (the partial), then a pause finishes it.</summary>
     private sealed class Dictation(string? textBefore, FieldInfo field, bool live = true, bool smart = true)
     {
         private readonly List<string> _finished = [];
+
+        public LiveTypingContext Context { get; } = new(textBefore, field, live, smart);
 
         public LiveTyping Typing { get; } = new(new DictationFormatter(), new LiveTypingContext(textBefore, field, live, smart));
 

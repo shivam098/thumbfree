@@ -124,10 +124,20 @@ public sealed class DictationInserter
 
     /// <summary>
     /// Types text that is already final, such as a piece from <see cref="LiveTyping"/> (formatted and spaced): line breaks
-    /// become the app's new-line keys. The same refusals as <see cref="Insert"/>, but only problems are reported, so the
-    /// pill isn't flooded while speaking. Returns false if nothing was typed.
+    /// become the app's new-line keys. The same refusals as <see cref="Insert"/>, also when <paramref name="field"/> says
+    /// it's a password field, but only problems are reported, so the pill isn't flooded while speaking. Returns false if
+    /// nothing was typed.
     /// </summary>
-    public bool TypePrepared(string text) => text.Length > 0 && Type(text, addSpace: false, heard: null);
+    public bool TypePrepared(string text, FieldInfo? field = null)
+    {
+        if (field?.Password == true)
+        {
+            Report(StatusKind.Warning, PasswordRefusal);
+            return false;
+        }
+
+        return text.Length > 0 && Type(text, addSpace: false, heard: null);
+    }
 
     /// <summary>Inserts the last dictated text again.</summary>
     public bool RepeatLast()
@@ -168,8 +178,8 @@ public sealed class DictationInserter
             return false;
         }
 
-        // Only whether the field ends in a word is known here, so the space goes before anything but punctuation.
-        if (addSpace && _desktop.FocusedTextEndsWithNonWhitespace() == true && !Insertion.StartsAttached(text))
+        // Only whether the field ends in a word is known here: a space goes before anything that doesn't attach to it.
+        if (addSpace && _desktop.FocusedTextEndsWithNonWhitespace() == true && !Insertion.JoinsDirectly(text))
         {
             text = " " + text;
         }

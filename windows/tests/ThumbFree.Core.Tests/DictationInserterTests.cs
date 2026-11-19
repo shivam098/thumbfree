@@ -169,4 +169,14 @@ public class DictationInserterTests
         Assert.False(_inserter.TypePrepared("more"));
         Assert.Equal(StatusKind.Warning, _statuses[^1].Kind);
     }
+
+    [Fact]
+    public void Live_pieces_for_a_password_field_are_refused()
+    {
+        // The field read when dictation started says password, even if the desktop can't tell now.
+        Assert.False(_inserter.TypePrepared("open sesame", new FieldInfo(Password: true)));
+        Assert.Empty(_desktop.Actions);
+        Assert.Equal(StatusKind.Warning, _statuses[^1].Kind);
+        Assert.True(_inserter.TypePrepared("Hello", new FieldInfo(MultiLine: true)));
+    }
 }

@@ -292,6 +292,12 @@ public static partial class SelfCorrection
     private const string Time = @"\d{1,2}(?::\d{2})?(?:\s?(?:[aApP]\.?\s?[mM](?![\p{L}])\.?|o'clock))?";
     private const string Value = "(?i:" + Day + ")|" + Time;
 
+    // Never inside a decimal ("2.5, actually 3"): no digit-and-point just before or after a value.
+    private const string NotInNumber = @"(?<![\p{L}\p{Nd}:])(?<!\p{Nd}[.,])";
+    private const string Separator = @"\s*(?:\.\.\.|…|[,.;!?—–-])?\s*";
+    private const string Markers = "actually|sorry|I mean|no wait|or rather|make (?:it|that)";
+    private const string AfterMarker = @"(?:\s*[,.]|\s*\.\.\.|\s*…)?";
+
     private static readonly HashSet<string> Days = [.. Day.Split('|')];
     private static readonly HashSet<string> WeekdayNames = [.. Weekdays.Split('|')];
 
@@ -320,6 +326,12 @@ public static partial class SelfCorrection
         return Replacement(first, second, newSentence) ?? m.Value;
     });
 
+    /// <summary>
+    /// The text ends with a value and a correction marker ("at 6, sorry,"): the words said next may still replace the
+    /// value, so nothing before them is final yet.
+    /// </summary>
+    internal static bool AwaitsValue(string text) => AwaitsValueRegex().IsMatch(text);
+
     private static string? Replacement(string first, string second, bool newSentence) => (KindOf(first), KindOf(second)) switch
     {
         (Kind.Day, Kind.Day) => WeekdayNames.Contains(second.ToLowerInvariant()) ? char.ToUpperInvariant(second[0]) + second[1..] : second.ToLowerInvariant(),
@@ -338,9 +350,12 @@ public static partial class SelfCorrection
         : value.Contains(':') || MeridiemRegex().IsMatch(value) ? Kind.Time
         : Kind.Number;
 
-    // Never inside a decimal ("2.5, actually 3"): no digit-and-point just before or after a value.
-    [GeneratedRegex(@"(?<![\p{L}\p{Nd}:])(?<!\p{Nd}[.,])(" + Value + @")(\s*(?:\.\.\.|…|[,.;!?—–-])?\s*)((?i:actually|sorry|I mean|no wait|or rather|make (?:it|that)))(?:\s*[,.]|\s*\.\.\.|\s*…)?\s+(?:(?i:at|on|by)\s+)?(" + Value + @")(?![\p{L}\p{Nd}]|[.,]\p{Nd})")]
+    [GeneratedRegex(NotInNumber + "(" + Value + ")(" + Separator + ")((?i:" + Markers + "))" + AfterMarker + @"\s+(?:(?i:at|on|by)\s+)?(" + Value + @")(?![\p{L}\p{Nd}]|[.,]\p{Nd})")]
     private static partial Regex CorrectionRegex();
+
+    // The start of a correction at the end of the text, up to an "at", "on" or "by" that may come before the new value.
+    [GeneratedRegex(NotInNumber + "(?:" + Value + ")" + Separator + "(?i:" + Markers + ")" + AfterMarker + @"(?:\s+(?i:at|on|by))?\s*$")]
+    private static partial Regex AwaitsValueRegex();
 
     [GeneratedRegex(@"\s?(?:[ap]\.?\s?m\.?|o'clock)$", RegexOptions.IgnoreCase)]
     private static partial Regex MeridiemRegex();

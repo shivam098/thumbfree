@@ -18,7 +18,10 @@ namespace ThumbFree.Core;
 /// </param>
 public sealed record FieldInfo(bool Password = false, bool Search = false, bool MultiLine = false, bool Private = false, bool Email = false);
 
-/// <summary>How dictated text joins what is already in the field. Same rules as the Android app.</summary>
+/// <summary>
+/// How dictated text joins what is already in the field. Same rules as the Android app. Line ends in the text before the
+/// cursor count as \n whichever way the app reports them (see <see cref="NormalizeLineEnds"/>).
+/// </summary>
 public static partial class Insertion
 {
     // Text starting with one of these attaches to the word before it (", right?").
@@ -36,10 +39,13 @@ public static partial class Insertion
         }
 
         var trimmed = before.TrimEnd();
-        return trimmed.Length > 0 && trimmed[^1] is not ('.' or '!' or '?') && before[^1] != '\n';
+        return trimmed.Length > 0 && trimmed[^1] is not ('.' or '!' or '?') && !IsLineEnd(before[^1]);
     }
 
-    /// <summary>The text to type: with a leading space when it would otherwise run into the previous word.</summary>
+    /// <summary>
+    /// The text to type: with a leading space when it would otherwise run into the previous word. Text that starts with
+    /// whitespace already has its space.
+    /// </summary>
     public static string WithSpacing(string? before, string text)
     {
         if (text.Length == 0 || string.IsNullOrEmpty(before))
@@ -48,7 +54,7 @@ public static partial class Insertion
         }
 
         var last = before[^1];
-        var needsSpace = !char.IsWhiteSpace(last) && !AttachesToPrevious.Contains(text[0]) && !AttachesToNext.Contains(last);
+        var needsSpace = !char.IsWhiteSpace(last) && !AttachesToNext.Contains(last) && !JoinsDirectly(text);
         return needsSpace ? " " + text : text;
     }
 
@@ -56,13 +62,24 @@ public static partial class Insertion
     public static string ForField(string text, FieldInfo field) => field.MultiLine ? text : LineBreaksRegex().Replace(text, " ");
 
     /// <summary>
-    /// The text starts with punctuation or a line break, so no space goes before it whatever the previous character is
-    /// (for callers that only know whether the field ends in a word).
+    /// Line ends as \n. Apps report them as \r\n or \r, Word's line break (Shift+Enter) as \v, and some as the Unicode line
+    /// and paragraph separators.
     /// </summary>
-    internal static bool StartsAttached(string text) => text.Length > 0 && AttachesToPrevious.Contains(text[0]);
+    public static string? NormalizeLineEnds(string? text) => text is null ? null : LineEndsRegex().Replace(text, "\n");
+
+    /// <summary>
+    /// The text needs no space before it whatever comes before: it starts with whitespace, or with punctuation or a line
+    /// break that attaches to the previous word (also for callers that only know whether the field ends in a word).
+    /// </summary>
+    internal static bool JoinsDirectly(string text) => text.Length > 0 && (char.IsWhiteSpace(text[0]) || AttachesToPrevious.Contains(text[0]));
+
+    private static bool IsLineEnd(char c) => c is '\n' or '\r' or '\v' or '\u2028' or '\u2029';
 
     [GeneratedRegex(" *\n+ *")]
     private static partial Regex LineBreaksRegex();
+
+    [GeneratedRegex(@"\r\n?|[\v\u2028\u2029]")]
+    private static partial Regex LineEndsRegex();
 }
 
 /// <summary>Whisper's well-known outputs on silence or noise, dropped for short audio (under 2.5 s).</summary>
