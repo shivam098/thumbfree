@@ -28,13 +28,11 @@ internal enum GuideStep
 internal sealed class GuideWindow : Window
 {
     /// <param name="finished">Runs after Finish or Skip (the app opens its window then).</param>
-    public GuideWindow(AppServices services, Action finished)
+    /// <param name="workArea">The screen's work area to fit in (tests); by default the screen's own.</param>
+    public GuideWindow(AppServices services, Action finished, Rect? workArea = null)
     {
         Title = "Welcome to ThumbFree";
-        Width = 860;
-        Height = 740;
-        MinWidth = 700;
-        MinHeight = 600;
+        WindowFit.Apply(this, new Size(860, 740), new Size(700, 600), workArea);
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = Theme.Card;
         FontFamily = Theme.Font;

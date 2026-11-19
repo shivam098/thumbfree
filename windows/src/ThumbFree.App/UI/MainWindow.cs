@@ -26,14 +26,12 @@ internal sealed class MainWindow : Window
     private bool _toldAboutTray;
 
     /// <param name="balloon">Shows a short tray notification (once: "still running in the tray").</param>
-    public MainWindow(AppServices services, Action<string> balloon)
+    /// <param name="workArea">The screen's work area to fit in (tests); by default the screen's own.</param>
+    public MainWindow(AppServices services, Action<string> balloon, Rect? workArea = null)
     {
         _balloon = balloon;
         Title = "ThumbFree";
-        Width = 1060;
-        Height = 740;
-        MinWidth = 860;
-        MinHeight = 560;
+        WindowFit.Apply(this, new Size(1060, 740), new Size(860, 560), workArea);
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = Theme.Background;
         FontFamily = Theme.Font;
