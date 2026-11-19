@@ -51,10 +51,10 @@ data class FieldInfo(
 
 /** How dictated text joins what is already in the field. */
 object Insertion {
-    /** The text before the cursor doesn't end a sentence (so “And then…” continues as “and then…”). */
+    /** The text before the cursor doesn't end a sentence (so “And then…” continues as “and then…”). A line end of any kind (\r\n, \r, Word's \u000B, \u2028, \u2029) starts a new one. */
     fun continuesSentence(before: CharSequence?): Boolean {
         val trimmed = before?.trimEnd() ?: return false
-        return trimmed.isNotEmpty() && trimmed.last() !in ".!?\n" && before.last() != '\n'
+        return trimmed.isNotEmpty() && trimmed.last() !in ".!?\n" && before.last() !in "\n\r\u000B\u2028\u2029"
     }
 
     /** The text to commit: a leading space when it would otherwise run into the previous word. Text that starts with whitespace already has its space. */

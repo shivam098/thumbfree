@@ -111,6 +111,8 @@ class CoreTest {
         assertFalse(Insertion.continuesSentence("We shipped it. "))
         assertFalse(Insertion.continuesSentence(""))
         assertFalse(Insertion.continuesSentence("Dear John,\n"))
+        assertFalse(Insertion.continuesSentence("Dear John,\r"))
+        assertFalse(Insertion.continuesSentence("Dear John,\u2028"))
         assertEquals("a b", Insertion.forField("a\nb", FieldInfo(false, false, false, false)))
         assertEquals("a\nb", Insertion.forField("a\nb", FieldInfo(false, false, true, false)))
     }
