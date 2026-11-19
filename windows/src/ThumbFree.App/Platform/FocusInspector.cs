@@ -234,6 +234,13 @@ internal static class FocusInspector
             return true;
         }
 
+        // A rich editor's editable body (contenteditable, or designMode in a frame, as in TinyMCE) is a group in Chromium,
+        // which says multiline=false unless the page adds aria-multiline: it takes line breaks.
+        if (current.ControlType == ControlType.Group && current.FrameworkId == "Chrome")
+        {
+            return true;
+        }
+
         var aria = UiaAria.AriaProperties(window.Handle, Id(element)) ?? string.Empty;
         if (aria.Contains("multiline=true", StringComparison.OrdinalIgnoreCase))
         {

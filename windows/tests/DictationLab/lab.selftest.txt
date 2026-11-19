@@ -64,9 +64,9 @@ expectstatus: password field
 expectnot: secret words
 clipboard
 # An editor whose whole page is editable (designMode in a frame, as in TinyMCE): Chrome reports its editable body, a
-# group with no name, as focused, and that's the box.
+# group with no name, as focused. That's the box, and it takes line breaks.
 keys: Tab
 field
-expectfield: Group
+expectfield: Group multi-line
 ptt: Notes from the meeting full stop
 expect: Notes from the meeting.
