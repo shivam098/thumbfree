@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Threading;
 using ThumbFree.App.Platform;
 using ThumbFree.App.UI;
+using ThumbFree.Speech;
 
 namespace ThumbFree.App;
 
@@ -57,11 +58,12 @@ public partial class App : System.Windows.Application
         DispatcherUnhandledException += OnUnhandledException;
 
         var settings = AppSettings.LoadOrCreate();
-        _services = CreateServices(settings);
+        var models = new ModelStore(AppPaths.ModelsDir, AppPaths.SharedModelsDirs);
+        _services = CreateServices(settings, models);
         _overlay = new OverlayWindow();
         _overlay.Pinned = File.Exists(AppPaths.OverlayPinnedFlag);
 
-        _host = new DictationHost(settings, Dispatcher);
+        _host = new DictationHost(_services, new StoreSpeechModels(models), Dispatcher);
         _tray = new TrayIcon(_services, _overlay, new TrayCommands(OpenPage, _host.PasteLastTranscript, Quit));
         _services.Notifier = new Notifier(_tray, _services.State, _services.Environment.CopyText);
         WireUi(_host, _services);
@@ -70,7 +72,6 @@ public partial class App : System.Windows.Application
         _host.Activity += _overlay.ShowActivity;
         _host.DictationPreview += _overlay.ShowPreview;
         _host.InputLevel += _overlay.ShowInputLevel;
-        _host.DictationLanguageChanged += _overlay.SetDictationLanguage;
         _host.CaptureStopped += id =>
         {
             // Recording couldn't start or stopped by itself: stop treating the keys (and Esc) as recording.
@@ -85,10 +86,9 @@ public partial class App : System.Windows.Application
                 _tray?.SetRecording(false);
             }
         };
-        _overlay.SetDictationLanguage(_host.HinglishDictation, _host.HinglishAccurate);
 
         _pasteHotkey = TryRegister(settings.PasteLastHotkey, _host.PasteLastTranscript, "paste last dictation");
-        _languageHotkey = TryRegister(settings.DictationLanguageHotkey, _host.ToggleDictationLanguage, "switch dictation language");
+        _languageHotkey = TryRegister(settings.DictationLanguageHotkey, ToggleLanguage, "switch dictation language");
         InstallDictationKeys();
         SetPaused(File.Exists(AppPaths.PausedFlag));
         WarnIfAnotherDictationAppRuns();

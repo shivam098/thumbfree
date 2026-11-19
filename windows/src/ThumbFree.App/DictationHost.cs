@@ -6,132 +6,214 @@ using ThumbFree.Speech;
 
 namespace ThumbFree.App;
 
+/// <summary>What happened to a dictation (for self-tests and logs).</summary>
+/// <param name="Text">The whole dictation as laid out; empty when nothing was heard or it was refused.</param>
+/// <param name="TypedAll">Everything went into the text box it started in (or the guide's practice box).</param>
+/// <param name="Kept">It went to the tap-to-copy notification instead: the box changed or didn't take the text.</param>
+/// <param name="Problem">Why nothing more was typed (refused, nothing heard, recognition failed); null otherwise.</param>
+internal sealed record DictationOutcome(string Text, bool TypedAll, bool Kept, string? Problem);
+
 /// <summary>
-/// Tap-to-dictate: the microphone opens when Ctrl+Win is tapped and closes when it is tapped again. The recording is
-/// shown live (level meter and preview), then transcribed with Whisper and inserted at the cursor. All work runs on
-/// one serial queue.
+/// Tap-to-dictate (PLAN 3.0): Ctrl+Win opens the microphone, Ctrl+Win again finishes, Esc cancels. The text box is
+/// chosen when dictation starts and text only ever goes there (3.6, 3.10 rule 1): finished phrases are typed at pauses
+/// while you speak (<see cref="LiveTyping"/>, the rules every platform shares), the words not typed yet show in the
+/// pill, and the rest is typed when you finish. A dictation that can't go to its box is kept for copying. Recognition
+/// runs on one speech thread (<see cref="SpeechThread"/>); field checks and typing run on one serial queue, in order.
 /// </summary>
 internal sealed class DictationHost : IDisposable
 {
-    private static readonly HashSet<string> KnownHallucinations =
-        ["you", "thanks for watching", "thank you for watching", "please subscribe"];
+    private const int SampleRate = Decoding.SampleRate;
 
-    private const int SampleRate = WhisperRecognizer.SampleRate;
-    private const int PreviewIntervalMs = 600;
+    /// <summary>Streaming models get audio 100 ms at a time, as on Android.</summary>
+    private const int ChunkSamples = SampleRate / 10;
+
     private const int LevelIntervalMs = 50;
 
-    private readonly AppSettings _settings;
-    private readonly Dispatcher _ui;
+    /// <summary>Models that aren't streaming re-read the newest audio this often while you speak (PLAN 3.10).</summary>
+    private const int PreviewIntervalMs = 500;
+
+    /// <summary>A pause this long ends a phrase, which is then transcribed once and can be typed (Kroko: 0.8 s).</summary>
+    private const int PhrasePauseMs = 700;
+
+    private const string PasswordRefusal = "That's a password field — I won't type there.";
+
+    /// <summary>A model nobody has dictated with for this long is unloaded (PLAN 3.1).</summary>
+    private static readonly TimeSpan IdleUnload = TimeSpan.FromMinutes(3);
+
+    private readonly AppServices _services;
+    private readonly IDesktop _desktop;
+    private readonly IFieldReader _fields;
+    private readonly IAudioSource _audio;
+    private readonly SpeechThread _speech;
+    private readonly Action<Action> _post;
+    private readonly bool _soundsAllowed;
+    private readonly SoundFeedback _sounds;
     private readonly Channel<Func<Task>> _queue = Channel.CreateUnbounded<Func<Task>>(new UnboundedChannelOptions { SingleReader = true });
     private readonly CancellationTokenSource _shutdown = new();
-    private readonly object _captureGate = new();
-    private readonly List<float> _capture = [];
-    private readonly MicrophoneCapture _microphone;
-    private readonly DictationFormatter _formatter;
-    private readonly DictationInserter _inserter;
-    private readonly SoundFeedback _sounds;
-    private readonly object _hinglishGate = new();
-    private WhisperRecognizer? _recognizer;
-    private SpeechDetector? _detector;
-    private volatile WhisperRecognizer? _hinglish;
-    private volatile WhisperRecognizer? _hinglishAccurate;
-    private Task? _hinglishLoad;
-    private Task? _hinglishAccurateLoad;
-    private CancellationTokenSource? _accurateLoadCts;
-    private volatile bool _hinglishDictation;
-    private volatile bool _hinglishAccurateMode;
-    private WhisperRecognizer? _captureRecognizer;
-    private CancellationTokenSource? _previewCts;
-    private Task? _previewTask;
-    private Task? _queueTask;
-    private volatile bool _capturing;
-    private volatile int _captureId;
+    private readonly Timer _idleTimer;
+    private volatile DictationFormatter _formatter;
+    private DictationInserter _inserter;
+    private volatile Dictation? _current;
+    private int _active;
     private long _lastLevelTicks;
-    private bool _limitReached;
+    private Task? _queueTask;
 
-    public DictationHost(AppSettings settings, Dispatcher ui, IDesktop? desktop = null, bool persistState = true)
-    {
-        _settings = settings;
-        _ui = ui;
-        _hinglishDictation = persistState && File.Exists(AppPaths.HinglishDictationFlag);
-        _hinglishAccurateMode = persistState && File.Exists(AppPaths.HinglishAccurateFlag);
-        WindowsDesktop.InsertMethod = settings.InsertMethod;
-        _sounds = new SoundFeedback(settings.SoundFeedback && persistState);
-        _formatter = new DictationFormatter(new DictationOptions
-        {
-            RemoveFillerWords = settings.RemoveFillerWords,
-            SpokenPunctuation = settings.SpokenPunctuation,
-            Replacements = settings.Replacements,
-            Snippets = settings.Snippets,
-        });
-        _inserter = new DictationInserter(desktop ?? new WindowsDesktop(), _formatter, settings.NewLineKeys);
-        _inserter.Status += update => Post(() => Status?.Invoke(update));
-
-        _microphone = new MicrophoneCapture(settings.MicrophoneDevice);
-        _microphone.Samples += OnSamples;
-        _microphone.Failed += ex =>
-        {
-            Log.Error($"microphone failed: {ex.GetType().Name}");
-            Enqueue(async () =>
+    public DictationHost(AppServices services, ISpeechModels models, Dispatcher ui)
+        : this(
+            services,
+            models,
+            action =>
             {
-                var wasCapturing = _capturing;
-                await StopPreviewAsync().ConfigureAwait(false);
-                _capturing = false;
-                _microphone.Stop();
-                PostActivity(null);
-                if (wasCapturing)
+                if (!ui.HasShutdownStarted)
                 {
-                    ReportCaptureStopped(_captureId);
+                    ui.BeginInvoke(action);
                 }
+            },
+            new WindowsDesktop(),
+            new UiaFieldReader(),
+            new MicrophoneCapture(services.Current.MicrophoneDevice),
+            sounds: true)
+    {
+    }
 
-                Report(StatusKind.Error, "The microphone stopped. Check it's connected, then try again.");
-            });
-        };
+    /// <param name="post">Runs an action on the UI thread (later).</param>
+    /// <param name="sounds">Play the start and stop tones when Settings say so (off in tests).</param>
+    internal DictationHost(AppServices services, ISpeechModels models, Action<Action> post, IDesktop desktop, IFieldReader fields, IAudioSource audio, bool sounds)
+    {
+        _services = services;
+        _post = post;
+        _desktop = desktop;
+        _fields = fields;
+        _audio = audio;
+        _speech = new SpeechThread(models);
+        _idleTimer = new Timer(_ => _speech.Post(UnloadIfIdle));
+        var settings = services.Current;
+        WindowsDesktop.InsertMethod = settings.InsertMethod;
+        _soundsAllowed = sounds;
+        _sounds = new SoundFeedback(sounds && settings.SoundFeedback);
+        _formatter = NewFormatter(settings);
+        _inserter = NewInserter(_formatter, lastText: null);
+        _audio.Samples += OnSamples;
+        _audio.Failed += OnAudioFailed;
+        services.Settings.Changed += OnSettingsChanged;
     }
 
     /// <summary>Raised on the UI thread.</summary>
     public event Action<StatusUpdate>? Status;
 
     /// <summary>
-    /// Raised on the UI thread with the id passed to <see cref="BeginDictationCapture"/> when that recording couldn't
-    /// start or stopped on its own (model still loading, microphone error, time limit), so the keys stop acting as if
-    /// recording.
+    /// Raised on the UI thread with the id given to <see cref="BeginDictationCapture"/> when that recording couldn't start
+    /// or stopped by itself (password field, time limit, microphone lost), so the keys stop acting as if recording.
     /// </summary>
     public event Action<int>? CaptureStopped;
 
     /// <summary>
-    /// Raised on the UI thread with a transient label (<see cref="DictationLabels.Listening"/>,
-    /// <see cref="DictationLabels.Transcribing"/>); null clears it.
+    /// Raised on the UI thread with <see cref="DictationLabels.Listening"/> or <see cref="DictationLabels.Transcribing"/>;
+    /// null clears it.
     /// </summary>
     public event Action<string?>? Activity;
 
     /// <summary>Raised on the UI thread about 20 times a second while recording with the microphone level (0 to 1).</summary>
     public event Action<float>? InputLevel;
 
-    /// <summary>Raised on the UI thread with the live transcript while recording (null clears it).</summary>
+    /// <summary>Raised on the UI thread with the words said but not typed yet (null clears them), for the pill.</summary>
     public event Action<string?>? DictationPreview;
 
-    /// <summary>
-    /// Raised on the UI thread when the dictation language changes: Hindi + English on/off, and whether it uses the
-    /// accurate (slower) model.
-    /// </summary>
-    public event Action<bool, bool>? DictationLanguageChanged;
-
-    public bool HinglishDictation => _hinglishDictation;
-
-    public bool HinglishAccurate => _hinglishAccurateMode;
+    /// <summary>Raised on the queue when a dictation is over.</summary>
+    internal event Action<DictationOutcome>? Finished;
 
     /// <summary>For scripted self-tests (call only from <see cref="RunOnQueueAsync"/>).</summary>
     internal DictationInserter Inserter => _inserter;
 
-    public void Start()
+    public void Start() => _queueTask = Task.Run(ProcessQueueAsync);
+
+    /// <summary>
+    /// UI thread: starts recording for the text box that has the focus (or the guide's practice box). <paramref name="id"/>
+    /// identifies this recording in <see cref="CaptureStopped"/>.
+    /// </summary>
+    public void BeginDictationCapture(int id)
     {
-        _queueTask = Task.Run(ProcessQueueAsync);
-        Enqueue(LoadAsync);
+        if (_current is not null)
+        {
+            return;
+        }
+
+        var settings = _services.Current;
+        var spec = settings.SelectedModel();
+        if (!_speech.Models.IsInstalled(spec))
+        {
+            ModelMissing(spec, openHome: true);
+            ReportCaptureStopped(id);
+            return;
+        }
+
+        var practice = _services.Practice.Active;
+        var window = practice is null ? _desktop.GetForegroundWindow() : null;
+        if (window is not null && _fields.IsElevated(window))
+        {
+            Report(StatusKind.Warning, "That window runs as administrator; Windows won't let me type into it.");
+            ReportCaptureStopped(id);
+            return;
+        }
+
+        var live = settings.LiveTyping && (spec.Streaming || spec.Engine == Engine.Parakeet || spec.LivePreview);
+        var d = new Dictation(id, spec, settings, _formatter, window, practice, live, PreviewModel(settings, spec, live));
+        try
+        {
+            _audio.Start();
+        }
+        catch (Exception ex) when (ex is NAudio.MmException or InvalidOperationException or IOException)
+        {
+            Log.Error($"microphone start failed: {ex.GetType().Name}");
+            Report(StatusKind.Error, "Couldn't open the microphone. Check Settings › Privacy › Microphone.");
+            ReportCaptureStopped(id);
+            return;
+        }
+
+        _current = d;
+        Interlocked.Increment(ref _active);
+        _idleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+        _sounds.Play(SoundFeedback.Cue.StartTyping);
+        PostActivity(DictationLabels.Listening);
+        Log.Info($"dictation {id}: {spec.Id}, {(live ? "live typing" : "typed at the end")}{(d.PreviewSpec is { } p ? $", preview {p.Id}" : string.Empty)}{(practice is null ? string.Empty : ", practice box")}{(window is null && practice is null ? ", no window" : string.Empty)}");
+        if (window is not null)
+        {
+            d.FieldRead = Task.Run(() => _fields.Read(window));
+            _ = d.FieldRead.ContinueWith(
+                read =>
+                {
+                    if (read.Result?.Password == true)
+                    {
+                        _post(() => Refuse(d));
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnRanToCompletion,
+                TaskScheduler.Default);
+        }
+
+        _speech.Post(() => Open(d));
+        if (d.PreviewSpec is not null)
+        {
+            d.PreviewTimer = new Timer(_ => PreviewTick(d), null, PreviewIntervalMs, PreviewIntervalMs);
+        }
     }
 
-    /// <summary>Starts only the queue (no microphone or models) for scripted self-tests.</summary>
-    internal void StartForSelfTest() => _queueTask = Task.Run(ProcessQueueAsync);
+    /// <summary>UI thread: stops recording; types the rest unless <paramref name="cancel"/>.</summary>
+    public void EndDictationCapture(bool cancel)
+    {
+        if (_current is { } d)
+        {
+            Stop(d, cancel, quiet: false);
+        }
+    }
+
+    /// <summary>Types the last dictation again where the cursor is (Alt+Shift+Z).</summary>
+    public void PasteLastTranscript() => Enqueue(() =>
+    {
+        _inserter.RepeatLast();
+        return Task.CompletedTask;
+    });
 
     internal Task RunOnQueueAsync(Func<Task> work)
     {
@@ -151,307 +233,222 @@ internal sealed class DictationHost : IDisposable
         return done.Task;
     }
 
-    /// <summary>Opens the microphone and starts recording. <paramref name="id"/> identifies this recording in <see cref="CaptureStopped"/>.</summary>
-    public void BeginDictationCapture(int id) => Enqueue(() =>
+    /// <summary>
+    /// Self-tests: dictates <paramref name="phrases"/> into the focused text box without a microphone or a model, each as
+    /// if followed by a pause. With <paramref name="live"/> they're typed as they come (live typing); without, at the end.
+    /// </summary>
+    internal Task<DictationOutcome> DictateAsync(IReadOnlyList<string> phrases, bool live)
     {
-        if (_capturing)
+        var window = _desktop.GetForegroundWindow();
+        var settings = _services.Current;
+        var d = new Dictation(0, settings.SelectedModel(), settings, _formatter, window, practice: null, live, previewSpec: null);
+        if (window is not null)
         {
-            return Task.CompletedTask;
+            d.FieldRead = Task.Run(() => _fields.Read(window));
         }
 
-        _captureId = id;
-
-        // A recording that ended early (cancelled, silence) may have kept a model that's no longer chosen.
-        ReleaseAccurateIfUnused();
-        if (_recognizer is null)
+        Interlocked.Increment(ref _active);
+        var done = new TaskCompletionSource<DictationOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Enqueue(async () =>
         {
-            Report(StatusKind.Warning, "Still loading the speech model…");
-            ReportCaptureStopped(id);
-            return Task.CompletedTask;
-        }
-
-        lock (_captureGate)
-        {
-            _capture.Clear();
-        }
-
-        try
-        {
-            _microphone.Start();
-        }
-        catch (Exception ex) when (ex is NAudio.MmException or InvalidOperationException)
-        {
-            Log.Error($"microphone start failed: {ex.GetType().Name}");
-            Report(StatusKind.Error, "Couldn't open the microphone. Check Settings › Privacy › Microphone.");
-            ReportCaptureStopped(id);
-            return Task.CompletedTask;
-        }
-
-        _limitReached = false;
-        _lastLevelTicks = 0;
-        _capturing = true;
-        _captureRecognizer = _recognizer;
-        WhisperRecognizer? previewRecognizer = _recognizer;
-        if (_hinglishDictation)
-        {
-            var final = HinglishForTyping();
-            if (_hinglishAccurateMode && _hinglishAccurate is null)
+            for (var i = 1; live && i <= phrases.Count; i++)
             {
-                // Retries after a failed download or load, too.
-                EnsureHinglishLoading();
-            }
-
-            if (final is not null)
-            {
-                _captureRecognizer = final;
-
-                // The accurate model takes seconds per pass: the live preview uses the fast one (or is skipped).
-                previewRecognizer = final == _hinglishAccurate ? _hinglish : final;
-                if (_hinglishAccurateMode && final != _hinglishAccurate)
+                lock (d.Gate)
                 {
-                    Report(StatusKind.Warning, "The accurate Hindi + English model is still loading; this dictation uses the fast one.");
+                    d.Phrases.Clear();
+                    d.Phrases.AddRange(phrases.Take(i));
                 }
-            }
-            else
-            {
-                EnsureHinglishLoading();
-                Report(StatusKind.Warning, "The Hindi + English model isn't ready yet; this dictation uses English.");
-            }
-        }
 
-        _sounds.Play(SoundFeedback.Cue.StartTyping);
-        PostActivity(DictationLabels.Listening);
-        if (_settings.LivePreview && previewRecognizer is not null)
-        {
-            _previewCts = new CancellationTokenSource();
-            var token = _previewCts.Token;
-            var recognizer = previewRecognizer;
-            _previewTask = Task.Run(() => RunPreviewAsync(recognizer, token));
-        }
-
-        return Task.CompletedTask;
-    });
-
-    /// <summary>Stops recording and closes the microphone; transcribes and types unless cancelled.</summary>
-    public void EndDictationCapture(bool cancel) => Enqueue(() => EndCaptureAsync(cancel));
-
-    /// <param name="cancel">Throw the recording away instead of typing it.</param>
-    /// <param name="onlyId">Stop only if this recording is still the one in progress (time limit).</param>
-    private async Task EndCaptureAsync(bool cancel, int? onlyId = null)
-    {
-        if (!_capturing || (onlyId is { } id && id != _captureId))
-        {
-            return;
-        }
-
-        _capturing = false;
-
-        // Show “Transcribing…” straight away: stopping the live preview may wait for a pass that is still running.
-        PostActivity(cancel ? null : DictationLabels.Transcribing);
-        try
-        {
-            await StopPreviewAsync().ConfigureAwait(false);
-            _microphone.Stop();
-            float[] audio;
-            lock (_captureGate)
-            {
-                audio = [.. _capture];
-                _capture.Clear();
+                await UpdateAsync(d).ConfigureAwait(false);
             }
 
-            _sounds.Play(cancel ? SoundFeedback.Cue.Standby : SoundFeedback.Cue.StopTyping);
-            if (cancel)
-            {
-                Report(StatusKind.Info, "Dictation cancelled.");
-                return;
-            }
-
-            var recognizer = _captureRecognizer ?? _recognizer;
-            if (audio.Length < SampleRate / 4 || recognizer is null)
-            {
-                return;
-            }
-
-            IReadOnlyList<float[]> chunks = _detector is null
-                ? SpeechSegments.Chunk(audio, [(TimeSpan.Zero, TimeSpan.FromSeconds((double)audio.Length / SampleRate))], SampleRate, 14000, 0)
-                : SpeechSegments.Chunk(audio, _detector.Detect(audio), SampleRate, 14000, 200);
-            if (chunks.Count == 0)
-            {
-                Report(StatusKind.Info, "I didn't hear any speech.");
-                return;
-            }
-
-            var parts = new List<string>();
-            foreach (var chunk in chunks)
-            {
-                var result = await recognizer.TranscribeAsync(chunk, _shutdown.Token).ConfigureAwait(false);
-                Log.Info($"chunk audio={chunk.Length * 1000 / SampleRate}ms asr={result.Elapsed.TotalMilliseconds:F0}ms{(recognizer == _hinglishAccurate ? " model=hinglish-accurate" : recognizer == _hinglish ? " model=hinglish" : string.Empty)}");
-                var text = TranscriptText.Clean(result.Text);
-                if (!(chunk.Length < SampleRate * 5 / 2 && KnownHallucinations.Contains(TranscriptText.Normalize(text))))
-                {
-                    parts.Add(text);
-                }
-            }
-
-            _inserter.Insert(string.Join(" ", parts.Where(p => p.Length > 0)));
-        }
-        finally
-        {
-            PostActivity(null);
-
-            // The language may have changed during this recording.
-            ReleaseAccurateIfUnused();
-        }
+            done.SetResult(await FinishAsync(d, Task.FromResult<IReadOnlyList<string>?>(phrases), []).ConfigureAwait(false));
+        });
+        return done.Task;
     }
-
-    /// <summary>The recording reached <see cref="AppSettings.MaxDictationSeconds"/>: finish it as if Ctrl+Win was tapped.</summary>
-    private async Task FinishAtLimitAsync(int id)
-    {
-        if (!_capturing || id != _captureId)
-        {
-            return;
-        }
-
-        var seconds = _settings.MaxDictationSeconds;
-        Log.Info($"dictation reached the {seconds}s limit");
-        ReportCaptureStopped(id);
-        await EndCaptureAsync(cancel: false, onlyId: id).ConfigureAwait(false);
-        var limit = seconds % 60 == 0 ? $"{seconds / 60} minute{(seconds == 60 ? string.Empty : "s")}" : $"{seconds} seconds";
-        Report(StatusKind.Info, $"Dictation stops by itself after {limit}. Tap Ctrl+Win to keep going.");
-    }
-    public void PasteLastTranscript() => Enqueue(() =>
-    {
-        _inserter.RepeatLast();
-        return Task.CompletedTask;
-    });
-
-    /// <summary>Switches dictation between English and Hindi + English (Alt+Shift+H), keeping the fast/accurate choice.</summary>
-    public void ToggleDictationLanguage() => Enqueue(() =>
-    {
-        ApplyDictationLanguage(!_hinglishDictation, _hinglishAccurateMode);
-        return Task.CompletedTask;
-    });
-
-    /// <summary>Sets the dictation language (tray menu); <paramref name="accurate"/> picks the larger Hindi + English model.</summary>
-    public void SetDictationLanguage(bool hinglish, bool accurate = false) => Enqueue(() =>
-    {
-        if (hinglish != _hinglishDictation || (hinglish && accurate != _hinglishAccurateMode))
-        {
-            ApplyDictationLanguage(hinglish, hinglish ? accurate : _hinglishAccurateMode);
-        }
-        else if (hinglish && _recognizer is not null)
-        {
-            // Choosing the current mode again retries a model that failed to download or load.
-            EnsureHinglishLoading();
-        }
-
-        return Task.CompletedTask;
-    });
 
     public void Dispose()
     {
-        _previewCts?.Cancel();
+        _services.Settings.Changed -= OnSettingsChanged;
+        if (_current is { } d)
+        {
+            d.Stopped = true;
+            d.Cancelled = true;
+            d.PreviewTimer?.Dispose();
+        }
+
+        _audio.Stop();
         _shutdown.Cancel();
         _queue.Writer.TryComplete();
-        var drained = true;
         try
         {
-            drained = _queueTask?.Wait(TimeSpan.FromSeconds(5)) ?? true;
+            _queueTask?.Wait(TimeSpan.FromSeconds(5));
         }
         catch (AggregateException ex)
         {
             Log.Warn($"queue ended with {ex.InnerException?.GetType().Name}");
         }
 
-        drained &= _previewTask?.Wait(TimeSpan.FromSeconds(5)) ?? true;
-        Task? hinglishLoad;
-        Task? hinglishAccurateLoad;
-        lock (_hinglishGate)
+        _idleTimer.Dispose();
+        _speech.Dispose();
+        _audio.Dispose();
+        _sounds.Dispose();
+    }
+
+    /// <summary>
+    /// The model that re-reads the newest audio while you speak (for live typing, or only for the pill), or null. Streaming
+    /// models report their text themselves; with Live typing off nothing re-reads audio (PLAN 3.10, rule 8). The accurate
+    /// Hindi + English model takes seconds per pass, so the standard one previews for it when it's here.
+    /// </summary>
+    private ModelSpec? PreviewModel(AppSettings settings, ModelSpec spec, bool live)
+    {
+        if (!settings.LiveTyping || spec.Streaming)
         {
-            hinglishLoad = _hinglishLoad;
-            hinglishAccurateLoad = _hinglishAccurateLoad;
+            return null;
         }
 
-        drained &= hinglishLoad?.Wait(TimeSpan.FromSeconds(5)) ?? true;
-        drained &= hinglishAccurateLoad?.Wait(TimeSpan.FromSeconds(5)) ?? true;
-        _microphone.Stop();
-        _microphone.Dispose();
-        _sounds.Dispose();
-        if (drained)
+        if (live)
         {
-            _recognizer?.Dispose();
-            _hinglish?.Dispose();
-            _hinglishAccurate?.Dispose();
-            _detector?.Dispose();
+            return spec;
+        }
+
+        return spec.Language == Language.Hinglish && spec.Id != ModelCatalog.Hinglish.Id && _speech.Models.IsInstalled(ModelCatalog.Hinglish)
+            ? ModelCatalog.Hinglish
+            : null;
+    }
+
+    /// <summary>UI thread: the chosen model isn't on this PC. Small models download straight away; big ones ask first (Home).</summary>
+    private void ModelMissing(ModelSpec spec, bool openHome)
+    {
+        var models = _services.Models;
+        var state = models.State(spec);
+        if (state.Status == ModelStatus.Downloading)
+        {
+            Report(StatusKind.Info, $"The speech model is still downloading ({(int)(state.Progress * 100)}%). Try again when it's done.");
+        }
+        else if (!ModelConsent.Needed(spec))
+        {
+            _ = models.Start(spec);
+            Report(StatusKind.Info, "Downloading the speech model (one time; it stays on this PC). Try again in a moment.");
         }
         else
         {
-            // Freeing a model while Whisper is mid-transcription crashes; the OS reclaims it at exit instead.
-            Log.Warn("queue did not drain; leaving speech models to process exit");
+            Report(StatusKind.Warning, $"Download “{ModelConsent.ShortName(spec)}” first, on ThumbFree's Home page.");
+            if (openHome)
+            {
+                _services.OpenPage(UI.AppPage.Home);
+            }
         }
     }
 
-    private void ApplyDictationLanguage(bool on, bool accurate)
+    /// <summary>UI thread: the dictation's text box is a password field: stop, and keep nothing.</summary>
+    private void Refuse(Dictation d)
     {
-        _hinglishDictation = on;
-        _hinglishAccurateMode = accurate;
-        StateFlags.Set(AppPaths.HinglishDictationFlag, on);
-        StateFlags.Set(AppPaths.HinglishAccurateFlag, accurate);
-        Log.Info($"dictation language: {(on ? accurate ? "hinglish-accurate" : "hinglish" : "english")}");
-        Post(() => DictationLanguageChanged?.Invoke(on, accurate));
-        if (!accurate)
+        if (Interlocked.Exchange(ref d.RefusalShown, 1) == 0)
         {
-            // Not wanted any more: stop its download/load and free its memory (about 1 GB).
-            _accurateLoadCts?.Cancel();
-            ReleaseAccurateIfUnused();
+            Report(StatusKind.Warning, PasswordRefusal);
         }
 
-        if (!on)
+        d.Refused = true;
+        if (ReferenceEquals(_current, d))
         {
-            Report(StatusKind.Info, "Dictation language: English.");
-        }
-        else if (HinglishForTyping() is { } ready && (!accurate || ready == _hinglishAccurate))
-        {
-            Report(StatusKind.Info, accurate
-                ? "Dictation language: Hindi + English, accurate (slower; Hindi is typed in Roman letters)."
-                : "Dictation language: Hindi + English (Hindi is typed in Roman letters).");
-        }
-        else if (_recognizer is not null)
-        {
-            EnsureHinglishLoading();
+            ReportCaptureStopped(d.Id);
+            Stop(d, cancel: true, quiet: true);
         }
     }
 
-    /// <summary>The model that types Hindi + English text: the accurate one when chosen and loaded, else the fast one.</summary>
-    private WhisperRecognizer? HinglishForTyping() =>
-        _hinglishAccurateMode && _hinglishAccurate is { } accurate ? accurate : _hinglish;
-
-    /// <summary>
-    /// Frees the accurate model when that mode is no longer chosen. Runs on the work queue, where every use of it
-    /// happens; a recording that started with it keeps it until it has been transcribed.
-    /// </summary>
-    private void ReleaseAccurateIfUnused()
+    /// <summary>UI thread: stops recording <paramref name="d"/>, then finishes it unless <paramref name="cancel"/>.</summary>
+    private void Stop(Dictation d, bool cancel, bool quiet)
     {
-        if (!_hinglishAccurateMode && !_capturing && _hinglishAccurate is { } model)
-        {
-            _hinglishAccurate = null;
-            model.Dispose();
-            Log.Info("hinglish-accurate model unloaded");
-        }
-    }
-
-    private void OnSamples(float[] samples)
-    {
-        if (!_capturing)
+        if (!ReferenceEquals(_current, d))
         {
             return;
         }
 
-        int recorded;
-        lock (_captureGate)
+        _current = null;
+        d.Stopped = true;
+        d.PreviewTimer?.Dispose();
+        _audio.Stop();
+        if (d.Silence.Silent)
         {
-            _capture.AddRange(samples);
-            recorded = _capture.Count;
+            _services.Notifier?.ClearMicrophoneSilent();
+        }
+
+        _sounds.Play(cancel ? SoundFeedback.Cue.Standby : SoundFeedback.Cue.StopTyping);
+        ShowPreview(null);
+        d.Practice?.ShowLive(null);
+        if (cancel)
+        {
+            d.Cancelled = true;
+            PostActivity(null);
+            _speech.Post(() => Close(d));
+            if (!quiet)
+            {
+                Report(StatusKind.Info, d.TypedAny ? "Dictation cancelled. The words already typed stay." : "Dictation cancelled.");
+            }
+
+            Done(d);
+            return;
+        }
+
+        PostActivity(DictationLabels.Transcribing);
+        float[] audio;
+        lock (d.Gate)
+        {
+            audio = [.. d.Audio];
+        }
+
+        var phrases = _speech.Run(() => FinishSpeech(d, audio));
+        Enqueue(async () => await FinishAsync(d, phrases, audio).ConfigureAwait(false));
+    }
+
+    /// <summary>The recording reached <see cref="AppSettings.MaxDictationSeconds"/>: finish it as if Ctrl+Win was tapped.</summary>
+    private void FinishAtLimit(Dictation d, int seconds)
+    {
+        if (!ReferenceEquals(_current, d))
+        {
+            return;
+        }
+
+        Log.Info($"dictation reached the {seconds}s limit");
+        ReportCaptureStopped(d.Id);
+        Stop(d, cancel: false, quiet: true);
+        var limit = seconds % 60 == 0 ? $"{seconds / 60} minute{(seconds == 60 ? string.Empty : "s")}" : $"{seconds} seconds";
+        Report(StatusKind.Info, $"Dictation stops by itself after {limit}. Tap Ctrl+Win to keep going.");
+    }
+
+    private void OnAudioFailed(Exception ex)
+    {
+        Log.Error($"microphone stopped: {ex.GetType().Name}");
+        _post(() =>
+        {
+            if (_current is not { } d)
+            {
+                return;
+            }
+
+            // PLAN 3.6: write what was said so far, and say so.
+            ReportCaptureStopped(d.Id);
+            _services.Notifier?.ShowInterrupted();
+            Report(StatusKind.Warning, "The microphone stopped. What you said so far is being written.");
+            Stop(d, cancel: false, quiet: true);
+        });
+    }
+
+    /// <summary>Capture thread.</summary>
+    private void OnSamples(float[] samples)
+    {
+        var d = _current;
+        if (d is null || d.Stopped)
+        {
+            return;
+        }
+
+        int total;
+        lock (d.Gate)
+        {
+            d.Audio.AddRange(samples);
+            total = d.Audio.Count;
         }
 
         var now = Environment.TickCount64;
@@ -459,230 +456,624 @@ internal sealed class DictationHost : IDisposable
         {
             _lastLevelTicks = now;
             var level = AudioLevel.Of(samples);
-            Post(() => InputLevel?.Invoke(level));
+            _post(() => InputLevel?.Invoke(level));
         }
 
-        var max = _settings.MaxDictationSeconds;
-        if (max > 0 && !_limitReached && recorded >= (long)max * SampleRate)
+        if (d.Silence.Add(samples))
         {
-            _limitReached = true;
-            var id = _captureId;
-            Enqueue(() => FinishAtLimitAsync(id));
-        }
-    }
-
-    /// <summary>Makes sure a model file exists, downloading and verifying it on first use.</summary>
-    private async Task<bool> EnsureModelAsync(string file, bool firstRun = true, string? what = null, CancellationToken cancellationToken = default)
-    {
-        if (AppPaths.FindModel(file) is not null)
-        {
-            return true;
-        }
-
-        if (!ModelDownloader.CanDownload(file))
-        {
-            Report(StatusKind.Error, $"Speech model {file} not found in {AppPaths.ModelsDir}.");
-            return false;
-        }
-
-        Log.Info($"downloading {file}");
-        what ??= "Hindi + English model (about 80 MB";
-        Report(StatusKind.Info, firstRun
-            ? "First run: downloading the speech model (one time, stays on this PC)…"
-            : $"Downloading the {what}, one time)…");
-        try
-        {
-            // Progress shows in the pill only on first run; later downloads must not replace a "Listening…" label,
-            // so they report every 10% as a status message instead.
-            var lastTenth = 0;
-            await ModelDownloader.DownloadAsync(file, AppPaths.ModelsDir, percent =>
+            if (d.Silence.Silent)
             {
-                if (firstRun)
-                {
-                    PostActivity($"Downloading speech model… {percent}%");
-                }
-                else if (percent / 10 > lastTenth && percent < 100)
-                {
-                    lastTenth = percent / 10;
-                    Report(StatusKind.Info, $"Downloading the {what.Split(" (")[0]}… {percent}%");
-                }
-            }, cancellationToken.CanBeCanceled ? cancellationToken : _shutdown.Token).ConfigureAwait(false);
-            Log.Info($"downloaded {file}");
-            return true;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && !_shutdown.IsCancellationRequested)
-        {
-            Log.Info($"download of {file} cancelled");
-            return false;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or TaskCanceledException or UnauthorizedAccessException)
-        {
-            Log.Error($"download of {file} failed: {ex.GetType().Name}");
-            Report(StatusKind.Error, firstRun
-                ? "Couldn't download the speech model. Check the internet connection and restart ThumbFree."
-                : $"Couldn't download the {what.Split(" (")[0]}. Check the internet connection and switch it on again.");
-            return false;
-        }
-        finally
-        {
-            if (firstRun)
-            {
-                PostActivity(null);
-            }
-        }
-    }
-
-    private async Task LoadAsync()
-    {
-        foreach (var file in new[] { _settings.ModelFile, _settings.VadModelFile })
-        {
-            if (!await EnsureModelAsync(file).ConfigureAwait(false) && file == _settings.ModelFile)
-            {
-                return;
-            }
-        }
-
-        PostActivity("Loading speech model…");
-        var started = DateTime.UtcNow;
-        try
-        {
-            var modelPath = AppPaths.FindModel(_settings.ModelFile)!;
-            _recognizer = await Task.Run(() => new WhisperRecognizer(modelPath, new RecognizerOptions
-            {
-                Threads = _settings.Threads,
-                AudioContextSize = _settings.AudioContextSize,
-                Prompt = _settings.VocabularyPrompt,
-            })).ConfigureAwait(false);
-            await _recognizer.TranscribeAsync(new float[SampleRate], _shutdown.Token).ConfigureAwait(false);
-
-            if (AppPaths.FindModel(_settings.VadModelFile) is { } vadPath)
-            {
-                _detector = new SpeechDetector(vadPath);
+                Log.Warn("microphone sends only silence");
+                _services.Notifier?.ShowMicrophoneSilent();
+                Report(StatusKind.Warning, "No sound from the microphone. Is another app or a call using it?");
             }
             else
             {
-                Log.Warn("vad model missing; transcribing whole recordings");
+                _services.Notifier?.ClearMicrophoneSilent();
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+
+        if (d.Spec.Streaming && d.Ready && total - d.Fed >= ChunkSamples && Interlocked.Exchange(ref d.FeedQueued, 1) == 0)
         {
-            Log.Error($"model load failed: {ex.GetType().Name}");
-            Report(StatusKind.Error, "Couldn't load the speech model. Delete it from the models folder and restart to re-download.");
+            _speech.Post(() => Feed(d));
+        }
+
+        var max = _services.Current.MaxDictationSeconds;
+        if (max > 0 && !d.LimitReached && total >= (long)max * SampleRate)
+        {
+            d.LimitReached = true;
+            _post(() => FinishAtLimit(d, max));
+        }
+    }
+
+    /// <summary>Timer thread: asks the speech thread to re-read the newest audio, unless it's still busy with the last pass.</summary>
+    private void PreviewTick(Dictation d)
+    {
+        if (d.Stopped || !d.Ready || d.Preview is not { } preview)
+        {
             return;
         }
-        finally
+
+        int pending;
+        lock (d.Gate)
         {
-            PostActivity(null);
+            pending = d.Audio.Count - preview.CommittedSamples;
         }
 
-        Log.Info($"models loaded in {(DateTime.UtcNow - started).TotalMilliseconds:F0} ms (vad={_detector is not null})");
-        if (_hinglishDictation)
+        if (pending >= SampleRate / 2 && Interlocked.Exchange(ref d.PreviewBusy, 1) == 0)
         {
-            EnsureHinglishLoading();
-        }
-
-        Report(StatusKind.Info, "Ready. Tap Ctrl+Win, speak, then tap it again to type.");
-    }
-
-    /// <summary>
-    /// Downloads (first time) and loads the Hindi + English model(s) in the background. The accurate mode loads both:
-    /// the fast model drives the live preview.
-    /// </summary>
-    private void EnsureHinglishLoading()
-    {
-        lock (_hinglishGate)
-        {
-            if (_hinglish is null && _hinglishLoad is null)
-            {
-                _hinglishLoad = Task.Run(() => LoadHinglishAsync(accurate: false));
-            }
-
-            if (_hinglishAccurateMode && _hinglishAccurate is null && _hinglishAccurateLoad is null)
-            {
-                _accurateLoadCts?.Dispose();
-                _accurateLoadCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
-                var token = _accurateLoadCts.Token;
-                _hinglishAccurateLoad = Task.Run(() => LoadHinglishAsync(accurate: true, token));
-            }
+            _speech.Post(() => Reread(d));
         }
     }
 
-    private async Task LoadHinglishAsync(bool accurate, CancellationToken cancellationToken = default)
+    // ---- speech thread ----
+
+    /// <summary>Loads the model (audio is recorded meanwhile) and opens the streaming session or the live preview.</summary>
+    private void Open(Dictation d)
     {
-        var file = accurate ? _settings.HinglishAccurateModelFile : _settings.HinglishModelFile;
-        var what = accurate ? "accurate Hindi + English model (about 830 MB" : "Hindi + English model (about 80 MB";
-        var token = cancellationToken.CanBeCanceled ? cancellationToken : _shutdown.Token;
+        if (d.Cancelled)
+        {
+            return;
+        }
+
         try
         {
-            if (!await EnsureModelAsync(file, firstRun: false, what, token).ConfigureAwait(false))
+            var model = _speech.Model(d.Spec, Threads(d.Spec), keep: d.PreviewSpec);
+            model.Resume();
+            if (d.Spec.Streaming)
             {
-                return;
+                d.Session = _speech.Models.StartSession(model);
+            }
+            else if (d.PreviewSpec is { } previewSpec)
+            {
+                var previewModel = previewSpec.Id == d.Spec.Id ? model : _speech.Model(previewSpec, Threads(previewSpec), keep: d.Spec);
+                previewModel.Resume();
+                var previewPrompt = previewSpec.PromptVocabulary ? d.Prompt : null;
+                d.Preview = new DictationPreview(
+                    audio => Task.FromResult(Prepare(d, previewModel.Transcribe(audio, preview: true, previewPrompt), audio.Length)),
+                    _speech.Models.DetectSpeech,
+                    SampleRate,
+                    phrasePauseMs: d.Live ? PhrasePauseMs : null,
+                    commit: d.Live ? audio => Task.FromResult(Prepare(d, model.Transcribe(audio, preview: false, d.Prompt), audio.Length)) : null);
             }
 
-            var started = DateTime.UtcNow;
-            var recognizer = new WhisperRecognizer(AppPaths.FindModel(file)!, new RecognizerOptions
+            d.Ready = true;
+            if (d.Session is not null)
             {
-                Threads = _settings.Threads,
-                AudioContextSize = _settings.AudioContextSize,
-            });
-            try
-            {
-                // Not cancellable: Whisper keeps running natively after a cancel, so it must finish before Dispose.
-                await recognizer.TranscribeAsync(new float[SampleRate], CancellationToken.None).ConfigureAwait(false);
-            }
-            catch
-            {
-                recognizer.Dispose();
-                throw;
-            }
-
-            if (token.IsCancellationRequested || (accurate && !_hinglishAccurateMode))
-            {
-                // Switched to another mode (or exiting) while it loaded.
-                recognizer.Dispose();
-                Log.Info($"{(accurate ? "hinglish-accurate" : "hinglish")} model no longer needed after loading; unloaded");
-                return;
-            }
-
-            if (accurate)
-            {
-                _hinglishAccurate = recognizer;
-            }
-            else
-            {
-                _hinglish = recognizer;
-            }
-
-            Log.Info($"{(accurate ? "hinglish-accurate" : "hinglish")} model loaded in {(DateTime.UtcNow - started).TotalMilliseconds:F0} ms");
-            if (_hinglishDictation && accurate == _hinglishAccurateMode)
-            {
-                Report(StatusKind.Success, accurate
-                    ? "Accurate Hindi + English dictation is ready (a few seconds per phrase; Hindi is typed in Roman letters)."
-                    : "Hindi + English dictation is ready (Hindi is typed in Roman letters).");
+                Feed(d);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            Log.Error($"{(accurate ? "hinglish-accurate" : "hinglish")} model load failed: {ex.GetType().Name}");
-            Report(StatusKind.Error, $"Couldn't load the {what.Split(" (")[0]}. Delete it from the models folder and switch it on again.");
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            lock (_hinglishGate)
+            Log.Error($"model {d.Spec.Id} didn't load: {ex.GetType().Name} 0x{ex.HResult:X8}");
+            d.LoadFailed = true;
+            _post(() =>
             {
-                if (accurate)
+                Report(StatusKind.Error, "Couldn't load the speech model. Delete it in Settings, then download it again.");
+                if (ReferenceEquals(_current, d))
                 {
-                    _hinglishAccurateLoad = null;
+                    ReportCaptureStopped(d.Id);
+                    Stop(d, cancel: true, quiet: true);
+                }
+            });
+        }
+    }
+
+    /// <summary>Gives the streaming session the audio recorded since the last time, 100 ms at a time.</summary>
+    private void Feed(Dictation d)
+    {
+        Volatile.Write(ref d.FeedQueued, 0);
+        if (d.Session is not { } session || d.Cancelled)
+        {
+            return;
+        }
+
+        float[] fresh;
+        lock (d.Gate)
+        {
+            fresh = d.Audio.GetRange(d.Fed, d.Audio.Count - d.Fed).ToArray();
+            d.Fed = d.Audio.Count;
+        }
+
+        for (var i = 0; i < fresh.Length; i += ChunkSamples)
+        {
+            session.Accept(fresh[i..Math.Min(fresh.Length, i + ChunkSamples)]);
+        }
+
+        var finished = session.Finished;
+        var partial = Prepare(d, session.Partial, 0);
+        lock (d.Gate)
+        {
+            for (var i = d.Phrases.Count; i < finished.Count; i++)
+            {
+                d.Phrases.Add(Prepare(d, finished[i], 0));
+            }
+
+            d.Partial = partial;
+        }
+
+        ScheduleUpdate(d);
+    }
+
+    /// <summary>Re-reads the audio after the last finished phrase (models that aren't streaming).</summary>
+    private void Reread(Dictation d)
+    {
+        try
+        {
+            if (d.Stopped || d.Preview is not { } preview)
+            {
+                return;
+            }
+
+            float[] pending;
+            lock (d.Gate)
+            {
+                pending = d.Audio.GetRange(preview.CommittedSamples, d.Audio.Count - preview.CommittedSamples).ToArray();
+            }
+
+            preview.UpdateAsync(pending).GetAwaiter().GetResult();
+            lock (d.Gate)
+            {
+                if (d.Live)
+                {
+                    d.Phrases.Clear();
+                    d.Phrases.AddRange(preview.Phrases);
+                    d.Partial = preview.Tentative;
                 }
                 else
                 {
-                    _hinglishLoad = null;
+                    // Only the pill: the model that types reads everything once you finish.
+                    d.Partial = LiveText.Join(preview.Phrases, preview.Tentative);
                 }
             }
+
+            ScheduleUpdate(d);
         }
+        finally
+        {
+            Volatile.Write(ref d.PreviewBusy, 0);
+        }
+    }
+
+    /// <summary>
+    /// The dictation's phrases once recording stops: every phrase typed or shown before, then the rest. Null when the speech
+    /// couldn't be recognized. A streaming session already heard everything; other models transcribe the audio after the
+    /// last finished phrase, cut at pauses into pieces they can take (14 s for Whisper, 30 s for Parakeet).
+    /// </summary>
+    private IReadOnlyList<string>? FinishSpeech(Dictation d, float[] audio)
+    {
+        if (d.LoadFailed || d.Refused || !d.Ready)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (d.Session is { } session)
+            {
+                Feed(d);
+                var all = session.Finish();
+                session.Dispose();
+                d.Session = null;
+                lock (d.Gate)
+                {
+                    for (var i = d.Phrases.Count; i < all.Count; i++)
+                    {
+                        d.Phrases.Add(Prepare(d, all[i], 0));
+                    }
+
+                    // The last phrase, cut at a pause, may end in a comma: the end of a dictation ends a sentence (as on Android).
+                    var phrases = d.Phrases.ToList();
+                    var last = phrases.FindLastIndex(p => d.Formatter.Format(p).Length > 0);
+                    if (last >= 0)
+                    {
+                        phrases[last] = LiveText.EndSentence(phrases[last]);
+                    }
+
+                    return phrases;
+                }
+            }
+
+            var model = _speech.Model(d.Spec, Threads(d.Spec), keep: d.PreviewSpec);
+            model.Resume();
+            var result = new List<string>();
+            var from = 0;
+            if (d.Live && d.Preview is { } preview)
+            {
+                result.AddRange(preview.Phrases);
+                from = Math.Min(preview.CommittedSamples, audio.Length);
+            }
+
+            d.Preview = null;
+            var tail = audio[from..];
+            var maxMs = d.Spec.MaxPieceSamples * 1000 / SampleRate;
+            foreach (var piece in SpeechSegments.Chunk(tail, _speech.Models.DetectSpeech(tail), SampleRate, maxMs, 200))
+            {
+                if (model.Transcribe(piece, preview: false, d.Prompt) is not { } text)
+                {
+                    return null;
+                }
+
+                result.Add(Prepare(d, text, piece.Length));
+            }
+
+            return result;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log.Error($"recognition failed: {ex.GetType().Name} 0x{ex.HResult:X8}");
+            return null;
+        }
+    }
+
+    private void Close(Dictation d)
+    {
+        d.Session?.Dispose();
+        d.Session = null;
+        d.Preview = null;
+    }
+
+    private void UnloadIfIdle()
+    {
+        if (Volatile.Read(ref _active) == 0)
+        {
+            _speech.UnloadAll();
+        }
+    }
+
+    // ---- queue: the field, typing, the end of each dictation ----
+
+    private void ScheduleUpdate(Dictation d)
+    {
+        if (Interlocked.Exchange(ref d.UpdateQueued, 1) == 0)
+        {
+            Enqueue(() => UpdateAsync(d));
+        }
+    }
+
+    /// <summary>Types the phrases that are final and shows the rest in the pill (or the practice box).</summary>
+    private async Task UpdateAsync(Dictation d)
+    {
+        Volatile.Write(ref d.UpdateQueued, 0);
+        if (d.Stopped && d.Id != 0)
+        {
+            // The end of the dictation types everything still to type, laid out.
+            return;
+        }
+
+        List<string> phrases;
+        string partial;
+        lock (d.Gate)
+        {
+            phrases = [.. d.Phrases];
+            partial = d.Partial;
+        }
+
+        if (d.Practice is { } box)
+        {
+            var words = d.Formatter.Format(LiveText.Join(phrases, partial));
+            box.ShowLive(words.Length > 0 ? words : null);
+            return;
+        }
+
+        if (await TypingAsync(d).ConfigureAwait(false) is not { } typing || (d.Stopped && d.Id != 0))
+        {
+            return;
+        }
+
+        var step = typing.Update(phrases, partial);
+        ShowPreview(step.Pending);
+        if (step.Type.Length > 0)
+        {
+            TypeIntoField(d, step.Type);
+        }
+    }
+
+    /// <summary>
+    /// The live typing of <paramref name="d"/>, once its text box is known (UI Automation, read when it started). Null for a
+    /// password field.
+    /// </summary>
+    private async Task<LiveTyping?> TypingAsync(Dictation d)
+    {
+        if (d.Typing is not null || d.Refused)
+        {
+            return d.Typing;
+        }
+
+        FocusedField? field = null;
+        try
+        {
+            field = await d.FieldRead.ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log.Warn($"field read failed: {ex.GetType().Name}");
+        }
+
+        d.Field = field;
+
+        // A box UI Automation can't read is treated as one that takes line breaks, as Voice Dictation did: "new line"
+        // presses the app's new-line keys (Shift+Enter in chat apps).
+        d.Info = field?.ToFieldInfo() ?? new FieldInfo(MultiLine: true);
+        if (d.Info.Password)
+        {
+            d.Refused = true;
+            return null;
+        }
+
+        if (d.Window is null)
+        {
+            Detach(d, "There was no text box to type into.");
+        }
+
+        Log.Info($"dictation {d.Id} field: {field?.Kind ?? "unknown"}{(field?.TextBefore is { } before ? $", {before.Length} chars before" : string.Empty)}");
+        d.Typing = new LiveTyping(d.Formatter, new LiveTypingContext(field?.TextBefore, d.Info, d.Live, d.Smart));
+        return d.Typing;
+    }
+
+    /// <summary>Types into the dictation's own text box only: a different window or box detaches it (PLAN 3.6).</summary>
+    private bool TypeIntoField(Dictation d, string text)
+    {
+        if (d.DetachReason is not null || text.Length == 0)
+        {
+            return false;
+        }
+
+        var now = _desktop.GetForegroundWindow();
+        var same = d.Field is { } field
+            ? _fields.IsSameField(field, now)
+            : now is not null && d.Window is not null && now.Handle == d.Window.Handle;
+        if (same == false)
+        {
+            Detach(d, "You moved to another window or text box, so it wasn't typed there.");
+            return false;
+        }
+
+        if (same is null)
+        {
+            Log.Info("same-field check timed out in the same window; typing");
+        }
+
+        if (!_inserter.TypePrepared(text, d.Info))
+        {
+            Detach(d, "The text box didn't take it.");
+            return false;
+        }
+
+        d.TypedAny = true;
+        return true;
+    }
+
+    private static void Detach(Dictation d, string reason)
+    {
+        if (d.DetachReason is null)
+        {
+            d.DetachReason = reason;
+            Log.Info($"dictation {d.Id}: nothing more is typed ({reason})");
+        }
+    }
+
+    /// <summary>
+    /// The end of a dictation: types the rest into its text box (or the practice box), or keeps it for copying, then
+    /// History and samples.
+    /// </summary>
+    private async Task<DictationOutcome> FinishAsync(Dictation d, Task<IReadOnlyList<string>?> recognized, float[] audio)
+    {
+        var outcome = new DictationOutcome(string.Empty, false, false, "stopped");
+        try
+        {
+            var phrases = await recognized.ConfigureAwait(false);
+            if (d.Refused)
+            {
+                outcome = outcome with { Problem = "password field" };
+                return outcome;
+            }
+
+            if (phrases is null)
+            {
+                Report(StatusKind.Error, d.TypedAny ? "Couldn't transcribe the rest. The words already typed stay." : "Couldn't transcribe that. Try again.");
+                outcome = outcome with { Problem = "recognition failed" };
+                return outcome;
+            }
+
+            var raw = LiveText.Join(phrases, string.Empty);
+            if (d.Practice is { } box)
+            {
+                var practiced = d.Formatter.Format(raw);
+                if (practiced.Length == 0)
+                {
+                    Report(StatusKind.Info, "I didn't catch anything.");
+                    outcome = outcome with { Problem = "nothing heard" };
+                    return outcome;
+                }
+
+                box.Insert(practiced);
+                Keep(d, audio, raw, practiced, app: null);
+                Report(StatusKind.Success, "Typed.", practiced);
+                outcome = new DictationOutcome(practiced, true, false, null);
+                return outcome;
+            }
+
+            if (await TypingAsync(d).ConfigureAwait(false) is not { } typing)
+            {
+                if (Interlocked.Exchange(ref d.RefusalShown, 1) == 0)
+                {
+                    Report(StatusKind.Warning, PasswordRefusal);
+                }
+
+                outcome = outcome with { Problem = "password field" };
+                return outcome;
+            }
+
+            var rest = typing.Finish(phrases);
+            var text = typing.FinalText;
+            if (text.Length == 0)
+            {
+                Report(StatusKind.Info, "I didn't catch anything.");
+                outcome = outcome with { Problem = "nothing heard" };
+                return outcome;
+            }
+
+            if (typing.PhrasesChanged)
+            {
+                Detach(d, "The words changed after some were typed.");
+            }
+            else if (typing.FinishedWithoutLayout)
+            {
+                Log.Info($"dictation {d.Id}: typed without the final layout (it would have changed typed words)");
+            }
+
+            if (rest.Length > 0)
+            {
+                TypeIntoField(d, rest);
+            }
+
+            if (d.DetachReason is { } reason)
+            {
+                _inserter.LastText = text;
+                _services.Notifier?.ShowUntyped(text, reason);
+                Report(StatusKind.Warning, $"{reason} Your dictation is safe: click the notification to copy it.");
+                outcome = new DictationOutcome(text, false, true, null);
+            }
+            else
+            {
+                _inserter.LastText = typing.Text;
+                Report(StatusKind.Success, "Typed.", typing.Text);
+                outcome = new DictationOutcome(text, true, false, null);
+            }
+
+            Keep(d, audio, raw, text, d.Window?.ProcessName);
+            return outcome;
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            return outcome;
+        }
+        finally
+        {
+            if (_current is null)
+            {
+                PostActivity(null);
+            }
+
+            Done(d);
+            Finished?.Invoke(outcome);
+        }
+    }
+
+    /// <summary>
+    /// History (never from password fields, nor from windows known to be private) and, when opted in, a sample (never from
+    /// password fields or web browsers: <see cref="SampleStore"/>).
+    /// </summary>
+    private void Keep(Dictation d, float[] audio, string raw, string text, string? app)
+    {
+        if (!d.Info.Private)
+        {
+            _services.History.Add(text, app, d.Info.Password);
+        }
+
+        _services.Samples.Save(audio, raw, text, d.Spec, d.Info.Password || d.Info.Private, app);
+    }
+
+    private void Done(Dictation d)
+    {
+        if (Interlocked.Decrement(ref _active) == 0 && !_shutdown.IsCancellationRequested)
+        {
+            _idleTimer.Change(IdleUnload, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    // ---- settings ----
+
+    /// <summary>UI thread: Settings apply straight away; a dictation already going keeps what it started with.</summary>
+    private void OnSettingsChanged(SettingsChange change)
+    {
+        var settings = _services.Current;
+        if (change.Has(nameof(AppSettings.RemoveFillerWords), nameof(AppSettings.SpokenPunctuation), nameof(AppSettings.Replacements), nameof(AppSettings.Snippets), nameof(AppSettings.NewLineKeys)))
+        {
+            var formatter = NewFormatter(settings);
+            _formatter = formatter;
+            Enqueue(() =>
+            {
+                _inserter = NewInserter(formatter, _inserter.LastText);
+                return Task.CompletedTask;
+            });
+        }
+
+        if (change.Has(nameof(AppSettings.SoundFeedback)))
+        {
+            _sounds.Enabled = _soundsAllowed && settings.SoundFeedback;
+        }
+
+        if (change.Has(nameof(AppSettings.InsertMethod)))
+        {
+            WindowsDesktop.InsertMethod = settings.InsertMethod;
+        }
+
+        if (change.Has(nameof(AppSettings.Language)))
+        {
+            Report(StatusKind.Info, settings.Language == Language.Hinglish
+                ? "Dictation language: Hindi + English (Hindi is typed in Roman letters)."
+                : "Dictation language: English.");
+        }
+
+        if (change.Has(nameof(AppSettings.Language), nameof(AppSettings.EnglishTier), nameof(AppSettings.HinglishTier), nameof(AppSettings.Threads)))
+        {
+            if (!_speech.Models.IsInstalled(settings.SelectedModel()))
+            {
+                ModelMissing(settings.SelectedModel(), openHome: false);
+            }
+
+            // The next dictation loads the model chosen now; the old one goes if nothing is using it.
+            _speech.Post(UnloadIfIdle);
+        }
+    }
+
+    private static DictationFormatter NewFormatter(AppSettings settings) => new(new DictationOptions
+    {
+        RemoveFillerWords = settings.RemoveFillerWords,
+        SpokenPunctuation = settings.SpokenPunctuation,
+        Replacements = Copy(settings.Replacements),
+        Snippets = Copy(settings.Snippets),
+    });
+
+    /// <summary>A copy the Settings page can't change under a dictation; keys that differ only in case keep the last value.</summary>
+    private static Dictionary<string, string> Copy(IReadOnlyDictionary<string, string>? source)
+    {
+        var copy = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in source ?? new Dictionary<string, string>())
+        {
+            copy[key] = value;
+        }
+
+        return copy;
+    }
+
+    private DictationInserter NewInserter(DictationFormatter formatter, string? lastText)
+    {
+        var inserter = new DictationInserter(_desktop, formatter, Copy(_services.Current.NewLineKeys)) { LastText = lastText };
+        inserter.Status += update => _post(() => Status?.Invoke(update));
+        return inserter;
+    }
+
+    /// <summary>Parakeet runs fastest on 4 threads; the streaming model uses 2 at most by itself.</summary>
+    private int Threads(ModelSpec spec) => spec.Engine == Engine.Parakeet ? Math.Min(_services.Current.Threads, 4) : _services.Current.Threads;
+
+    /// <summary>
+    /// A phrase as the text pipeline takes it (PLAN 3.2): cleaned, Whisper's known hallucinations on short audio and echoes
+    /// of the word-list prompt dropped, then near misses of listed words fixed.
+    /// </summary>
+    private static string Prepare(Dictation d, string? raw, int samples)
+    {
+        var text = TranscriptText.Clean(raw);
+        if (text.Length == 0
+            || (!d.Spec.Streaming && Hallucinations.IsLikely(text, samples))
+            || (d.Prompt is not null && Vocabulary.IsEcho(text, d.Words)))
+        {
+            return string.Empty;
+        }
+
+        return Vocabulary.Correct(text, d.Words);
     }
 
     private async Task ProcessQueueAsync()
@@ -712,100 +1103,93 @@ internal sealed class DictationHost : IDisposable
 
     private void Enqueue(Func<Task> work) => _queue.Writer.TryWrite(work);
 
-    /// <summary>Re-transcribes the recording so far every <see cref="PreviewIntervalMs"/> and shows it live.</summary>
-    private async Task RunPreviewAsync(WhisperRecognizer recognizer, CancellationToken token)
+    private void ShowPreview(string? text)
     {
-        var detector = _detector;
-        var preview = new DictationPreview(
-            async audio =>
-            {
-                // Never cancel Whisper mid-run (it keeps running natively); the final transcription waits for it.
-                var result = await recognizer.TranscribeAsync(audio, CancellationToken.None).ConfigureAwait(false);
-                var text = TranscriptText.Clean(result.Text);
-                return audio.Length < SampleRate * 5 / 2 && KnownHallucinations.Contains(TranscriptText.Normalize(text)) ? string.Empty : text;
-            },
-            detector is null ? null : detector.Detect,
-            SampleRate);
-        var seen = 0;
-        var updates = 0;
-        var busy = TimeSpan.Zero;
-        string? shown = null;
-        try
-        {
-            while (true)
-            {
-                await Task.Delay(PreviewIntervalMs, token).ConfigureAwait(false);
-                float[] pending;
-                lock (_captureGate)
-                {
-                    if (_capture.Count - seen < SampleRate * 3 / 10)
-                    {
-                        continue;
-                    }
-
-                    seen = _capture.Count;
-                    pending = _capture.GetRange(preview.CommittedSamples, seen - preview.CommittedSamples).ToArray();
-                }
-
-                if (pending.Length < SampleRate / 2)
-                {
-                    continue;
-                }
-
-                var started = DateTime.UtcNow;
-                var text = await preview.UpdateAsync(pending).ConfigureAwait(false);
-                busy += DateTime.UtcNow - started;
-                updates++;
-                var formatted = text.Length == 0 ? string.Empty : _formatter.Format(text).Replace("\r", string.Empty).Replace("\n", " ↵ ");
-                if (!token.IsCancellationRequested && formatted != shown)
-                {
-                    shown = formatted;
-                    Post(() => DictationPreview?.Invoke(formatted));
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"live preview stopped: {ex.GetType().Name} 0x{ex.HResult:X8}");
-        }
-        finally
-        {
-            if (updates > 0)
-            {
-                Log.Info($"live preview updates={updates} avg={busy.TotalMilliseconds / updates:F0}ms");
-            }
-        }
+        var shown = string.IsNullOrEmpty(text) ? null : text.Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", " ↵ ", StringComparison.Ordinal);
+        _post(() => DictationPreview?.Invoke(shown));
     }
 
-    /// <summary>Stops the live preview and waits for any in-flight transcription so the recognizer is free.</summary>
-    private async Task StopPreviewAsync()
+    private void ReportCaptureStopped(int id) => _post(() => CaptureStopped?.Invoke(id));
+
+    private void Report(StatusKind kind, string message, string? heard = null) => _post(() => Status?.Invoke(new StatusUpdate(kind, message, heard)));
+
+    private void PostActivity(string? activity) => _post(() => Activity?.Invoke(activity));
+
+    /// <summary>One dictation, from Ctrl+Win to the end of typing. Comments say which thread uses what.</summary>
+    private sealed class Dictation(int id, ModelSpec spec, AppSettings settings, DictationFormatter formatter, WindowInfo? window, IPracticeTarget? practice, bool live, ModelSpec? previewSpec)
     {
-        var task = _previewTask;
-        _previewCts?.Cancel();
-        if (task is not null)
-        {
-            await task.ConfigureAwait(false);
-        }
+        public readonly object Gate = new();
 
-        _previewCts = null;
-        _previewTask = null;
-        Post(() => DictationPreview?.Invoke(null));
-    }
+        /// <summary>The recording (guarded by <see cref="Gate"/>).</summary>
+        public readonly List<float> Audio = [];
 
-    private void ReportCaptureStopped(int id) => Post(() => CaptureStopped?.Invoke(id));
+        /// <summary>Finished phrases, prepared, in order; they never change once added (guarded by <see cref="Gate"/>).</summary>
+        public readonly List<string> Phrases = [];
 
-    private void Report(StatusKind kind, string message) => Post(() => Status?.Invoke(new StatusUpdate(kind, message)));
+        public readonly SilenceWatch Silence = new(SampleRate);
 
-    private void PostActivity(string? activity) => Post(() => Activity?.Invoke(activity));
+        public volatile bool Stopped;
+        public volatile bool Cancelled;
+        public volatile bool Refused;
+        public volatile bool Ready;
+        public volatile bool LoadFailed;
+        public volatile bool TypedAny;
+        public volatile bool LimitReached;
+        public int FeedQueued;
+        public int PreviewBusy;
+        public int UpdateQueued;
+        public int RefusalShown;
 
-    private void Post(Action action)
-    {
-        if (!_ui.HasShutdownStarted)
-        {
-            _ui.BeginInvoke(action);
-        }
+        public int Id { get; } = id;
+
+        public ModelSpec Spec { get; } = spec;
+
+        /// <summary>
+        /// Phrases are typed while speaking: Live typing is on and the model keeps up (streaming, Parakeet, or one made for
+        /// it; on a PC even the accurate Parakeet does).
+        /// </summary>
+        public bool Live { get; } = live;
+
+        /// <summary>The model that re-reads the newest audio while you speak; null when none does.</summary>
+        public ModelSpec? PreviewSpec { get; } = previewSpec;
+
+        public bool Smart { get; } = settings.SmartFormatting;
+
+        public IReadOnlyList<string> Words { get; } = Vocabulary.Parse(settings.Vocabulary);
+
+        /// <summary>The word list as a prompt, for the one model that's better with it (PLAN 3.2).</summary>
+        public string? Prompt { get; } = spec.PromptVocabulary ? Vocabulary.Prompt(Vocabulary.Parse(settings.Vocabulary)) : null;
+
+        public DictationFormatter Formatter { get; } = formatter;
+
+        /// <summary>The window in front when it started; null for the practice box or when there was none.</summary>
+        public WindowInfo? Window { get; } = window;
+
+        public IPracticeTarget? Practice { get; } = practice;
+
+        /// <summary>The text box, read through UI Automation when it started (null result: it couldn't tell).</summary>
+        public Task<FocusedField?> FieldRead { get; set; } = Task.FromResult<FocusedField?>(null);
+
+        public Timer? PreviewTimer { get; set; }
+
+        /// <summary>Speech thread: the phrase being spoken (guarded by <see cref="Gate"/>).</summary>
+        public string Partial { get; set; } = string.Empty;
+
+        /// <summary>Speech thread: how much audio the streaming session has had (written under <see cref="Gate"/>).</summary>
+        public int Fed { get; set; }
+
+        public ILiveSession? Session { get; set; }
+
+        public DictationPreview? Preview { get; set; }
+
+        // Queue only:
+        public FocusedField? Field { get; set; }
+
+        public FieldInfo Info { get; set; } = new(MultiLine: true);
+
+        public LiveTyping? Typing { get; set; }
+
+        /// <summary>Why nothing more is typed into the box; the dictation is then kept for copying.</summary>
+        public string? DetachReason { get; set; }
     }
 }

@@ -16,7 +16,8 @@ internal sealed class StoreModelManager : IModelManager
 
     public ModelStore Store { get; }
 
-    public bool IsInstalled(ModelSpec spec) => Store.IsInstalled(spec);
+    /// <summary>The model's files, and Silero for the engines that find pauses with it (Whisper and Parakeet).</summary>
+    public bool IsInstalled(ModelSpec spec) => StoreSpeechModels.IsInstalled(Store, spec);
 
     /// <summary>
     /// Whisper and Parakeet find speech with Silero, which is small (885 KB) and comes with the first model that needs it.

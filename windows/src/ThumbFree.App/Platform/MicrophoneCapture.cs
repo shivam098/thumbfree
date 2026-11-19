@@ -3,7 +3,7 @@ using NAudio.Wave;
 namespace ThumbFree.App.Platform;
 
 /// <summary>Captures 16 kHz mono audio from the microphone. Audio stays in memory and is never written to disk.</summary>
-internal sealed class MicrophoneCapture : IDisposable
+internal sealed class MicrophoneCapture : IAudioSource
 {
     private readonly int _device;
     private WaveInEvent? _waveIn;
