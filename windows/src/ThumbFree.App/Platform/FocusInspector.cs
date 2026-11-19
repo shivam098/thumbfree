@@ -7,19 +7,28 @@ namespace ThumbFree.App.Platform;
 /// The text box a dictation is for, read once when it starts: what kind of field it is (for the text rules and smart
 /// formatting) and how to recognise it again, so text is only ever typed into that same box (PLAN 3.6).
 /// </summary>
+/// <param name="MultiLine">True or false when the app says so; null when it doesn't (most chat apps).</param>
 /// <param name="TextBefore">Text before the cursor (at most the last 2,000 characters); null when the app doesn't say.</param>
 /// <param name="CaretKnown">False when only the whole value could be read (the cursor is assumed to be at the end).</param>
 internal sealed record FocusedField(
     WindowInfo Window,
     int[]? ElementId,
     bool Password,
-    bool MultiLine,
+    bool? MultiLine,
     bool Search,
     bool Email,
     bool PrivateWindow,
     string? TextBefore,
     bool CaretKnown,
-    string Kind);
+    string Kind)
+{
+    /// <summary>
+    /// For the shared text rules. A box that doesn't say whether it takes line breaks is treated as one that does, as
+    /// Voice Dictation did: "new line" presses the app's new-line keys (Shift+Enter in chat apps). Only boxes known to be
+    /// single-line get spaces instead.
+    /// </summary>
+    public FieldInfo ToFieldInfo() => new(Password, Search, MultiLine ?? true, PrivateWindow, Email);
+}
 
 /// <summary>Reads the focused field through UI Automation. Never logs or keeps text or titles.</summary>
 internal static class FocusInspector
@@ -111,11 +120,12 @@ internal static class FocusInspector
             var addressBar = className.EndsWith("OmniboxViewViews", StringComparison.Ordinal) || (browser && controlType == ControlType.Edit && !InPage(element));
             var search = addressBar || name.Contains("search", StringComparison.OrdinalIgnoreCase) ||
                 (current.AutomationId ?? string.Empty).Contains("search", StringComparison.OrdinalIgnoreCase);
-            var multiLine = !password && !search && IsMultiLine(element, current, window.ProcessName, browser);
+            bool? multiLine = password || search ? false : IsMultiLine(element, current, window.ProcessName, browser);
             var email = !search && (EmailProcesses.Contains(window.ProcessName) || (browser && WebmailTitles.Any(t => window.Title.Contains(t, StringComparison.Ordinal))));
             var privateWindow = browser && PrivateTitles.Any(t => window.Title.Contains(t, StringComparison.Ordinal));
             var (before, caretKnown) = password ? (null, false) : TextBeforeCaret(element);
-            var kind = $"{controlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal)}{(multiLine ? " multi-line" : string.Empty)}{(search ? " search" : string.Empty)}{(email ? " email" : string.Empty)}";
+            var lines = multiLine switch { true => " multi-line", false => " single-line", null => string.Empty };
+            var kind = $"{controlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal)}{lines}{(search ? " search" : string.Empty)}{(email ? " email" : string.Empty)}{(password ? " password" : string.Empty)}{(privateWindow ? " private" : string.Empty)}";
             return new FocusedField(window, Id(element), password, multiLine, search, email, privateWindow, before, caretKnown, kind);
         }
         catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
@@ -126,11 +136,10 @@ internal static class FocusInspector
     }
 
     /// <summary>
-    /// Whether line breaks are text here. Wrong "yes" could send a chat message or submit a form with Enter, so it needs
-    /// evidence: a document, a Win32 edit with ES_MULTILINE, ARIA multiline (browsers' text areas and rich editors), or an
-    /// editor app.
+    /// Whether line breaks are text here: a document, ARIA multiline (browsers' text areas and rich editors), a Win32
+    /// edit's ES_MULTILINE, or an editor app. Null when the app doesn't say, which most chat apps don't.
     /// </summary>
-    private static bool IsMultiLine(AutomationElement element, AutomationElement.AutomationElementInformation current, string process, bool browser)
+    private static bool? IsMultiLine(AutomationElement element, AutomationElement.AutomationElementInformation current, string process, bool browser)
     {
         if (current.ControlType == ControlType.Document && !browser)
         {
@@ -143,13 +152,18 @@ internal static class FocusInspector
             return true;
         }
 
+        if (aria.Contains("multiline=false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         if (current.NativeWindowHandle != 0 && current.FrameworkId == "Win32" &&
             ((current.ClassName ?? string.Empty).StartsWith("Edit", StringComparison.OrdinalIgnoreCase) || (current.ClassName ?? string.Empty).StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase)))
         {
             return (Win32.GetWindowLongPtr(current.NativeWindowHandle, GwlStyle) & EsMultiline) != 0;
         }
 
-        return !browser && MultiLineEditors.Contains(process) && (current.ControlType == ControlType.Edit || current.ControlType == ControlType.Document);
+        return !browser && MultiLineEditors.Contains(process) && (current.ControlType == ControlType.Edit || current.ControlType == ControlType.Document) ? true : null;
     }
 
     /// <summary>
