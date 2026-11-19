@@ -16,8 +16,9 @@ internal interface IModelManager
 
     /// <summary>
     /// Downloads the model's missing files, reporting progress from 0 to 1, and resumes partial files. Throws
-    /// <see cref="OperationCanceledException"/> when cancelled; on failure, an exception whose message can be shown as
-    /// is (for example "Not enough free space: 661 MB needed.").
+    /// <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is cancelled (any other
+    /// cancellation, such as HttpClient's timeout, is shown as a stalled download); on failure, an exception whose
+    /// message can be shown as is (for example "Not enough free space: 661 MB needed.").
     /// </summary>
     Task DownloadAsync(ModelSpec spec, IProgress<double>? progress, CancellationToken cancellationToken);
 
@@ -183,7 +184,7 @@ internal sealed class ModelDownloads
             await Models.DownloadAsync(spec, progress, running.Cancel.Token).ConfigureAwait(false);
             Log.Info($"model {spec.Id} downloaded");
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (running.Cancel.IsCancellationRequested)
         {
             Log.Info($"model {spec.Id} download cancelled");
         }
@@ -192,6 +193,8 @@ internal sealed class ModelDownloads
             Log.Warn($"model {spec.Id} download failed: {ex.GetType().Name}");
             error = ex switch
             {
+                // Not the person's Cancel: HttpClient's timeout, or a stream that stopped sending.
+                OperationCanceledException => "The download stalled. Try again.",
                 HttpRequestException => "Couldn't download it. Check the internet connection, then try again.",
                 InvalidDataException => "The download was damaged. Try again.",
                 _ => ex.Message,

@@ -396,6 +396,17 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public async Task A_download_that_times_out_is_an_error_not_a_cancel()
+    {
+        var models = new FakeModelManager { Failure = new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.") };
+        var downloads = new ModelDownloads(models);
+
+        await downloads.Start(ModelCatalog.EnglishLive);
+
+        Assert.Equal(new ModelState(ModelStatus.NotInstalled, 0, "The download stalled. Try again."), downloads.State(ModelCatalog.EnglishLive));
+    }
+
+    [Fact]
     public void Only_big_models_ask_first_with_size_memory_and_data()
     {
         Assert.Equal(new[] { ModelCatalog.EnglishAccurate, ModelCatalog.HinglishAccurate }, ModelCatalog.All.Where(ModelConsent.Needed));
