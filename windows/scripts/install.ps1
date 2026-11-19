@@ -5,22 +5,18 @@
 .DESCRIPTION
     1. Uses the .NET 10 SDK (installs it into %LOCALAPPDATA%\Microsoft\dotnet if missing).
     2. Publishes a self-contained build for this machine's architecture.
-    3. Downloads the speech model from Hugging Face and verifies its SHA-256 hash (reuses Voice Dictation's or Voice Assistant's copy if present).
-    4. Installs to %LOCALAPPDATA%\Programs\ThumbFree and adds a Start menu shortcut.
-    5. Starts the app (look for the microphone icon in the system tray).
+    3. Installs to %LOCALAPPDATA%\Programs\ThumbFree and adds a Start menu shortcut.
+    4. Starts the app. The first-run guide downloads the speech model you pick (models Voice Dictation or Voice Assistant
+       already downloaded are reused).
 
 .EXAMPLE
     .\scripts\install.ps1
 .EXAMPLE
-    .\scripts\install.ps1 -Model ggml-base.en-q8_0.bin -StartAtSignIn
+    .\scripts\install.ps1 -StartAtSignIn
 #>
 [CmdletBinding()]
 param(
     [string] $InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\ThumbFree'),
-
-    # small.en-q8_0: better accuracy (~0.5 s per phrase on Snapdragon X). base.en-q8_0: faster (~0.2 s), less accurate.
-    [ValidateSet('ggml-small.en-q8_0.bin', 'ggml-base.en-q8_0.bin', 'ggml-base.en.bin')]
-    [string] $Model = 'ggml-small.en-q8_0.bin',
 
     [switch] $StartAtSignIn,
 
@@ -31,21 +27,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-# SHA-256 values from https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main (LFS oid).
-$ModelHashes = @{
-    'ggml-small.en-q8_0.bin' = '67a179f608ea6114bd3fdb9060e762b588a3fb3bd00c4387971be4d177958067'
-    'ggml-base.en-q8_0.bin'  = 'a4d4a0768075e13cfd7e19df3ae2dbc4a68d37d36a7dad45e8410c9a34f8c87e'
-    'ggml-base.en.bin'       = 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002'
-}
-# https://huggingface.co/api/models/ggml-org/whisper-vad/tree/main
-$VadHash = '2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987'
-
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $RepoRoot 'src\ThumbFree.App\ThumbFree.App.csproj'
-$DataDir = Join-Path $env:LOCALAPPDATA 'ThumbFree'
-$SharedModelsDirs = @((Join-Path $env:LOCALAPPDATA 'VoiceDictation\models'), (Join-Path $env:LOCALAPPDATA 'VoiceAssistant\models'))
-$ModelsDir = Join-Path $DataDir 'models'
-$SettingsFile = Join-Path $env:APPDATA 'ThumbFree\settings.json'
 $Exe = Join-Path $InstallDir 'ThumbFree.exe'
 $Shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\ThumbFree.lnk'
 
@@ -89,59 +72,6 @@ function Get-DotNet {
     return (Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe')
 }
 
-function Install-Model {
-    New-Item -ItemType Directory -Force $ModelsDir | Out-Null
-    Install-VerifiedFile "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$Model" (Join-Path $ModelsDir $Model) $ModelHashes[$Model] "speech model $Model"
-    # Silero voice-activity model: tells speech from music/noise and splits phrases that background sound merged.
-    Install-VerifiedFile 'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin' (Join-Path $ModelsDir 'ggml-silero-v6.2.0.bin') $VadHash 'voice-activity model'
-}
-
-function Install-VerifiedFile([string] $Url, [string] $Target, [string] $Expected, [string] $Label) {
-    if ((Test-Path $Target) -and (Get-FileHash $Target -Algorithm SHA256).Hash -eq $Expected) {
-        Write-Step "$Label already present and verified"
-        return
-    }
-
-    # Voice Dictation's and Voice Assistant's models are reused as they are (the app looks there too).
-    foreach ($dir in $SharedModelsDirs) {
-        $shared = Join-Path $dir (Split-Path $Target -Leaf)
-        if ((Test-Path $shared) -and (Get-FileHash $shared -Algorithm SHA256).Hash -eq $Expected) {
-            Write-Step "$Label found in $dir; reusing it"
-            return
-        }
-    }
-
-    Write-Step "Downloading $Label (one time)"
-    $partial = "$Target.partial"
-    Invoke-WebRequest $Url -OutFile $partial -UseBasicParsing
-    $actual = (Get-FileHash $partial -Algorithm SHA256).Hash
-    if ($actual -ne $Expected) {
-        Remove-Item $partial -Force
-        throw "Hash mismatch for $Label (expected $Expected, got $actual). Download discarded."
-    }
-
-    Move-Item -Force $partial $Target
-}
-
-function Set-ModelSetting {
-    New-Item -ItemType Directory -Force (Split-Path $SettingsFile) | Out-Null
-    if (Test-Path $SettingsFile) {
-        $settings = Get-Content $SettingsFile -Raw | ConvertFrom-Json
-        if ($settings.PSObject.Properties.Name -contains 'modelFile') {
-            if ($settings.modelFile -eq $Model) { return }
-            $settings.modelFile = $Model
-        }
-        else {
-            $settings | Add-Member -NotePropertyName modelFile -NotePropertyValue $Model
-        }
-    }
-    else {
-        $settings = [pscustomobject]@{ modelFile = $Model }
-    }
-
-    $settings | ConvertTo-Json -Depth 10 | Set-Content $SettingsFile -Encoding UTF8
-}
-
 $rid = Get-Rid
 Assert-SafeInstallDir
 $dotnet = Get-DotNet
@@ -151,9 +81,6 @@ Write-Step "Building ThumbFree ($rid, self-contained)"
 $staging = Join-Path $env:TEMP "ThumbFree-publish-$([guid]::NewGuid().ToString('N'))"
 & $dotnet publish $Project -c Release -r $rid --self-contained true -o $staging -nologo -v q
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
-
-Install-Model
-Set-ModelSetting
 
 $running = Get-Process ThumbFree -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) }
 if ($running) {
@@ -185,7 +112,8 @@ $link.Save()
 
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 if ($StartAtSignIn) {
-    Set-ItemProperty $runKey -Name ThumbFree -Value "`"$Exe`""
+    # --background: start quietly in the tray, without opening the window.
+    Set-ItemProperty $runKey -Name ThumbFree -Value "`"$Exe`" --background"
     Write-Step 'ThumbFree will start when you sign in'
 }
 
@@ -195,9 +123,9 @@ if (-not $NoLaunch) {
 }
 
 Write-Host ''
-Write-Host 'Installed. Look for the microphone icon in the system tray.' -ForegroundColor Green
+Write-Host 'Installed. The first-run guide sets up the microphone and the speech model.' -ForegroundColor Green
 Write-Host '  Tap Ctrl+Win, speak, tap Ctrl+Win again -> typed where your cursor is (Esc = cancel)'
-Write-Host '  Alt+Shift+Z pastes the last dictation; Alt+Shift+H switches to Hindi + English'
+Write-Host '  Alt+Shift+Z types the last dictation again; Alt+Shift+H switches to Hindi + English'
 foreach ($other in @(@('VoiceAssistant', 'Voice Assistant'), @('VoiceDictation', 'Voice Dictation'))) {
     if (Get-Process $other[0] -ErrorAction SilentlyContinue) {
         Write-Warning "$($other[1]) is running and also uses Ctrl+Win, so text would be typed twice. Exit one of them."
