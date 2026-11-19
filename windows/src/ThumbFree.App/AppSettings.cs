@@ -1,5 +1,9 @@
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using ThumbFree.Core;
 
 namespace ThumbFree.App;
 
@@ -36,6 +40,12 @@ internal static class AppPaths
     /// <summary>Present while the hotkeys are paused from the tray.</summary>
     public static string PausedFlag => Path.Combine(DataDir, "paused");
 
+    /// <summary>History: the text of recent dictations (30 days, at most 500), on this PC only (Local, not roaming).</summary>
+    public static string HistoryFile => Path.Combine(DataDir, "history.txt");
+
+    /// <summary>"Help improve ThumbFree": dictations kept to share by hand, only while that switch is on.</summary>
+    public static string SamplesDir => Path.Combine(DataDir, "samples");
+
     public static string SettingsFile { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ThumbFree", "settings.json");
 
     /// <summary>Voice Dictation's settings: copied once on first run, so the dictionary and options carry over.</summary>
@@ -57,7 +67,7 @@ internal static class AppPaths
     }
 }
 
-/// <summary>On/off UI choices remembered as empty flag files, so the user's settings.json is never rewritten.</summary>
+/// <summary>Bits of app state (paused, the pill pinned) remembered as empty flag files, apart from settings.json.</summary>
 internal static class StateFlags
 {
     public static void Set(string path, bool on)
@@ -81,15 +91,40 @@ internal static class StateFlags
     }
 }
 
+/// <summary>
+/// %APPDATA%\ThumbFree\settings.json. Settings that the app window shows are saved through <see cref="SettingsStore"/>,
+/// which writes only what changed; everything else in the file is edited by hand (Settings › Advanced › Open settings file).
+/// </summary>
 internal sealed class AppSettings
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonDocumentOptions DocumentOptions = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+
+        // People read and edit this file: "Alt+Shift+H" rather than "Alt\u002BShift\u002BH".
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new LenientEnumConverter<Language>(), new LenientEnumConverter<Tier>() },
+    };
+
+    /// <summary>
+    /// Settings read only when ThumbFree starts: a change to them (by hand in the file) needs a restart. Everything the
+    /// Settings page changes applies without one, through <see cref="SettingsStore.Changed"/>.
+    /// </summary>
+    public static IReadOnlySet<string> ReadAtStart { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        nameof(ModelFile), nameof(VadModelFile), nameof(HinglishModelFile), nameof(HinglishAccurateModelFile),
+        nameof(DictationLanguageHotkey), nameof(PasteLastHotkey), nameof(Threads), nameof(AudioContextSize),
+        nameof(VocabularyPrompt), nameof(MicrophoneDevice), nameof(InsertMethod), nameof(Snippets), nameof(NewLineKeys),
     };
 
     public string ModelFile { get; set; } = "ggml-small.en-q8_0.bin";
@@ -127,11 +162,23 @@ internal sealed class AppSettings
     /// </summary>
     public string InsertMethod { get; set; } = "Paste";
 
-    /// <summary>Short tones when recording starts and ends.</summary>
+    /// <summary>Short tones when recording starts and ends ("Sounds" in Settings).</summary>
     public bool SoundFeedback { get; set; } = true;
 
-    /// <summary>Show the words in the pill as you speak (uses extra CPU while recording).</summary>
-    public bool LivePreview { get; set; } = true;
+    /// <summary>
+    /// Live typing: words appear as you speak (typed at each pause, the phrase still being spoken in the pill). Off,
+    /// they show only in the pill, and the models that re-read the audio stop doing so. Replaces Voice Dictation's
+    /// "livePreview", which old settings files carry over.
+    /// </summary>
+    public bool LiveTyping { get; set; } = true;
+
+    /// <summary>Voice Dictation's name for <see cref="LiveTyping"/>, for code that still reads it.</summary>
+    [JsonIgnore]
+    public bool LivePreview
+    {
+        get => LiveTyping;
+        set => LiveTyping = value;
+    }
 
     /// <summary>
     /// A recording that is still going after this many seconds (Ctrl+Win was never tapped again) is finished and
@@ -166,14 +213,60 @@ internal sealed class AppSettings
         ["devenv"] = "Enter",
     };
 
-    public static AppSettings LoadOrCreate()
+    /// <summary>Dictation language; Alt+Shift+H, the tray and Settings switch it.</summary>
+    public Language Language { get; set; } = Language.English;
+
+    /// <summary>English model: Live (types as you speak; the default), Standard or Accurate.</summary>
+    public Tier EnglishTier { get; set; } = Tier.Live;
+
+    /// <summary>Hindi + English model: Standard or Accurate. There's no live model for it yet.</summary>
+    public Tier HinglishTier { get; set; } = Tier.Standard;
+
+    /// <summary>Smart formatting: emails laid out, spoken lists made into lists, “3 pm… actually 4 pm” → “4 pm”.</summary>
+    public bool SmartFormatting { get; set; } = true;
+
+    /// <summary>
+    /// "Words I use often": names and jargon, one per line, written the way they're listed. Only the first
+    /// <see cref="Core.Vocabulary.MaxEntries"/> are used.
+    /// </summary>
+    public string Vocabulary { get; set; } = string.Empty;
+
+    /// <summary>"What do you do?": the field picked last (its words were added to <see cref="Vocabulary"/>). Stays on this PC.</summary>
+    public string? Profession { get; set; }
+
+    /// <summary>History: keep the text of each dictation on this PC for 30 days. Turning it off deletes History.</summary>
+    public bool KeepHistory { get; set; } = true;
+
+    /// <summary>"Help improve ThumbFree": keep each dictation's audio and text on this PC, to share only by hand.</summary>
+    public bool SaveSamples { get; set; }
+
+    /// <summary>The first-run guide was finished, skipped or closed; it's offered again from Home, Settings and the tray.</summary>
+    public bool GuideDone { get; set; }
+
+    public Tier TierFor(Language language) => language == Language.Hinglish ? HinglishTier : EnglishTier;
+
+    /// <summary>The model chosen for <paramref name="language"/>.</summary>
+    public ModelSpec ModelFor(Language language) => ModelCatalog.ForLanguage(language, TierFor(language));
+
+    /// <summary>The model dictation uses now: the chosen tier of the current language.</summary>
+    public ModelSpec SelectedModel() => ModelFor(Language);
+
+    public static AppSettings LoadOrCreate() => Load(AppPaths.SettingsFile, AppPaths.VoiceDictationSettingsFile, AppPaths.DataDir);
+
+    /// <summary>
+    /// Reads <paramref name="path"/>, first copying Voice Dictation's settings there if it doesn't exist yet. Fields
+    /// this version doesn't know are ignored (and kept in the file), missing ones take their defaults, and a file that
+    /// can't be read gives the defaults without being overwritten. Only a new file is written.
+    /// </summary>
+    /// <param name="dataDir">Where the older on/off flag files are (they become <see cref="Language"/> and <see cref="HinglishTier"/>).</param>
+    internal static AppSettings Load(string path, string? voiceDictationPath = null, string? dataDir = null)
     {
         try
         {
-            if (!File.Exists(AppPaths.SettingsFile) && File.Exists(AppPaths.VoiceDictationSettingsFile))
+            if (!File.Exists(path) && voiceDictationPath is not null && File.Exists(voiceDictationPath))
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(AppPaths.SettingsFile)!);
-                File.Copy(AppPaths.VoiceDictationSettingsFile, AppPaths.SettingsFile);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.Copy(voiceDictationPath, path);
                 Log.Info("settings copied from Voice Dictation");
             }
         }
@@ -184,16 +277,14 @@ internal sealed class AppSettings
 
         try
         {
-            if (File.Exists(AppPaths.SettingsFile))
+            if (File.Exists(path))
             {
-                var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppPaths.SettingsFile), JsonOptions);
-                if (loaded is not null)
-                {
-                    loaded.Replacements = new(loaded.Replacements ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
-                    loaded.Snippets = new(loaded.Snippets ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
-                    loaded.NewLineKeys = new(loaded.NewLineKeys ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
-                    return loaded;
-                }
+                var file = JsonNode.Parse(File.ReadAllText(path), null, DocumentOptions) as JsonObject
+                    ?? throw new JsonException("settings.json isn't a JSON object");
+                var loaded = file.Deserialize<AppSettings>(JsonOptions) ?? new AppSettings();
+                loaded.Normalize();
+                loaded.Migrate(file, dataDir);
+                return loaded;
             }
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
@@ -203,9 +294,10 @@ internal sealed class AppSettings
         }
 
         var settings = new AppSettings();
+        settings.Migrate(new JsonObject(), dataDir);
         try
         {
-            settings.Save();
+            settings.Save(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -215,9 +307,136 @@ internal sealed class AppSettings
         return settings;
     }
 
-    public void Save()
+    /// <summary>Writes every setting to a new file. Changes to an existing file go through <see cref="SettingsStore"/>, which keeps the rest of it.</summary>
+    public void Save() => Save(AppPaths.SettingsFile);
+
+    internal void Save(string path) => SettingsStore.WriteAtomically(path, JsonSerializer.SerializeToNode(this, JsonOptions)!.AsObject());
+
+    /// <summary>Repairs what a hand-edited or older file can leave behind: nulls, case-sensitive dictionaries, a live Hindi tier.</summary>
+    private void Normalize()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(AppPaths.SettingsFile)!);
-        File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(this, JsonOptions));
+        Replacements = new(Replacements ?? [], StringComparer.OrdinalIgnoreCase);
+        Snippets = new(Snippets ?? [], StringComparer.OrdinalIgnoreCase);
+        NewLineKeys = new(NewLineKeys ?? [], StringComparer.OrdinalIgnoreCase);
+        Vocabulary ??= string.Empty;
+        DictationLanguageHotkey ??= "Alt+Shift+H";
+        PasteLastHotkey ??= "Alt+Shift+Z";
+        if (HinglishTier == Tier.Live)
+        {
+            HinglishTier = Tier.Standard;
+        }
+    }
+
+    /// <summary>Carries older choices over when the file doesn't have the newer field yet.</summary>
+    private void Migrate(JsonObject file, string? dataDir)
+    {
+        if (!file.ContainsKey("liveTyping") && file["livePreview"] is JsonValue preview && preview.TryGetValue(out bool live))
+        {
+            LiveTyping = live;
+        }
+
+        if (dataDir is null)
+        {
+            return;
+        }
+
+        if (!file.ContainsKey("language") && File.Exists(Path.Combine(dataDir, Path.GetFileName(AppPaths.HinglishDictationFlag))))
+        {
+            Language = Language.Hinglish;
+        }
+
+        if (!file.ContainsKey("hinglishTier") && File.Exists(Path.Combine(dataDir, Path.GetFileName(AppPaths.HinglishAccurateFlag))))
+        {
+            HinglishTier = Tier.Accurate;
+        }
+    }
+
+    /// <summary>Reads enum names in any case and turns unknown values into the default, so one typo can't reset every setting.</summary>
+    private sealed class LenientEnumConverter<T> : JsonConverter<T>
+        where T : struct, Enum
+    {
+        public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String && Enum.TryParse<T>(reader.GetString(), ignoreCase: true, out var named) && Enum.IsDefined(named))
+            {
+                return named;
+            }
+
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number) && Enum.IsDefined(typeof(T), number))
+            {
+                return (T)Enum.ToObject(typeof(T), number);
+            }
+
+            reader.Skip();
+            return default;
+        }
+
+        public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
+    }
+}
+
+/// <summary>
+/// The personal dictionary as Settings shows it: one "what it hears = what to type" per line. settings.json keeps it
+/// as <see cref="AppSettings.Replacements"/>; a line break inside what to type is written \n, and a backslash \\.
+/// </summary>
+internal static class PersonalDictionary
+{
+    public static string Format(IReadOnlyDictionary<string, string> entries) =>
+        string.Join(Environment.NewLine, entries.Select(e => $"{e.Key} = {Escape(e.Value ?? string.Empty)}"));
+
+    /// <summary>False, with a message naming the line, when a line isn't "heard = typed".</summary>
+    public static bool TryParse(string text, out Dictionary<string, string> entries, out string? error)
+    {
+        entries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        error = null;
+        var lines = text.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var eq = line.IndexOf('=', StringComparison.Ordinal);
+            if (eq < 0)
+            {
+                error = $"Line {i + 1} needs an “=” between what it hears and what to type (journals = genres).";
+                return false;
+            }
+
+            var heard = line[..eq].Trim();
+            if (heard.Length == 0)
+            {
+                error = $"Line {i + 1} needs what it hears before the “=”.";
+                return false;
+            }
+
+            entries[heard] = Unescape(line[(eq + 1)..].Trim());
+        }
+
+        return true;
+    }
+
+    private static string Escape(string value) =>
+        value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\r\n", "\\n", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
+
+    private static string Unescape(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '\\' && i + 1 < value.Length && value[i + 1] is '\\' or 'n')
+            {
+                sb.Append(value[i + 1] == 'n' ? '\n' : '\\');
+                i++;
+            }
+            else
+            {
+                sb.Append(value[i]);
+            }
+        }
+
+        return sb.ToString();
     }
 }
