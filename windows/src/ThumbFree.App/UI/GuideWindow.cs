@@ -529,8 +529,8 @@ internal sealed class GuideView : UserControl
         _content.Children.Add(ChoiceCard(
             "Help improve ThumbFree",
             "Keep my recordings, what was recognised and the typed text on this PC, so I can choose to send them to the " +
-            "ThumbFree team. Never from password fields or private browser windows. Nothing is sent automatically, and I can " +
-            "delete them any time in Settings.",
+            "ThumbFree team. Never from password fields or web browsers (a browser can't say whether a window is private). " +
+            "Nothing is sent automatically, and I can delete them any time in Settings.",
             Current.SaveSamples,
             () => _services.Settings.Update(s => s.SaveSamples = true)));
         Primary("Finish", Finish);

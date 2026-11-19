@@ -2,16 +2,18 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using ThumbFree.App.Platform;
 using ThumbFree.Core;
 
 namespace ThumbFree.App;
 
 /// <summary>
 /// "Help improve ThumbFree" (PLAN 3.8; off unless switched on). Each dictation's audio (a 16 kHz mono WAV) and a note
-/// (what was recognised, what was typed, the model, the app version and the time) are kept in
-/// %LOCALAPPDATA%\ThumbFree\samples: the newest 300, at most 150 MB. Nothing is ever sent anywhere: "Save samples as a
-/// zip…" makes a file the person shares however they choose, and "Delete all" removes everything. Same folder layout
-/// and note fields as the Android app, so the same tools read both.
+/// (what was recognised, what was typed, the app's name, the model, the app version and the time) are kept in
+/// %LOCALAPPDATA%\ThumbFree\samples: the newest 300, at most 150 MB. Never from password fields or web browsers
+/// (<see cref="MayKeep"/>). Nothing is ever sent anywhere: "Save samples as a zip…" makes a file the person shares
+/// however they choose, and "Delete all" removes everything. Same folder layout and note fields as the Android app
+/// (plus the app, the platform and the time), so the same tools read both.
 /// </summary>
 internal sealed class SampleStore
 {
@@ -51,16 +53,25 @@ internal sealed class SampleStore
     public string Folder { get; }
 
     /// <summary>
-    /// Keeps one dictation, on a background thread. Nothing is kept unless "Help improve ThumbFree" is on, nor when
-    /// <paramref name="passwordField"/> is true or <paramref name="windowTitle"/> is a private browser window
-    /// (<see cref="PrivateWindows.IsPrivate"/>): the host passes both for every dictation.
+    /// The privacy rule for samples (PLAN 3.8): never from a password field, and never from a web browser, because a
+    /// browser can't reliably say whether a window is private (<see cref="Browsers"/>). Other desktop apps and
+    /// ThumbFree's own practice boxes (<paramref name="app"/> null) may be kept.
+    /// </summary>
+    /// <param name="app">The process name of the app the text went to ("WINWORD"); null for ThumbFree's own boxes.</param>
+    public static bool MayKeep(string? app, bool passwordField) => !passwordField && !Browsers.IsBrowser(app);
+
+    /// <summary>
+    /// Keeps one dictation, on a background thread, when "Help improve ThumbFree" is on and <see cref="MayKeep"/>
+    /// allows it. The host passes, for every dictation, whether it went into a password field and the app's process
+    /// name. The note records the app's name, never its window title.
     /// </summary>
     /// <param name="audio">The recording: 16 kHz mono, -1 to 1.</param>
     /// <param name="recognized">What the model heard, before formatting.</param>
     /// <param name="typed">What was typed (or kept for copying).</param>
-    public bool Save(float[] audio, string recognized, string typed, ModelSpec model, bool passwordField, string? windowTitle)
+    /// <param name="app">The process name of the app the text went to ("WINWORD"); null for ThumbFree's own practice boxes.</param>
+    public bool Save(float[] audio, string recognized, string typed, ModelSpec model, bool passwordField, string? app)
     {
-        if (!_enabled() || passwordField || PrivateWindows.IsPrivate(windowTitle) || audio.Length == 0)
+        if (!_enabled() || !MayKeep(app, passwordField) || audio.Length == 0)
         {
             return false;
         }
@@ -79,6 +90,7 @@ internal sealed class SampleStore
                     ["seconds"] = Math.Round(audio.Length / (double)Decoding.SampleRate, 2),
                     ["transcript"] = recognized,
                     ["typed"] = typed,
+                    ["app"] = app ?? "ThumbFree",
                     ["app_version"] = _appVersion,
                     ["platform"] = "windows",
                     ["time"] = time.ToString("o", CultureInfo.InvariantCulture),
@@ -265,16 +277,3 @@ internal sealed class SampleStore
 }
 
 internal readonly record struct SampleSummary(int Count, long Bytes);
-
-/// <summary>
-/// Recognises private browser windows by their titles: Edge "InPrivate", Chrome "Incognito", Firefox "Private
-/// Browsing", Opera "Private browsing", Brave and Vivaldi "Private". Samples are never kept from them. Erring towards
-/// privacy is fine: a document named "Incognito notes" is skipped too.
-/// </summary>
-internal static class PrivateWindows
-{
-    private static readonly string[] Markers = ["InPrivate", "Incognito", "Private Browsing", "Private window", "Private tab", "(Private)"];
-
-    public static bool IsPrivate(string? windowTitle) =>
-        !string.IsNullOrEmpty(windowTitle) && Markers.Any(m => windowTitle.Contains(m, StringComparison.OrdinalIgnoreCase));
-}

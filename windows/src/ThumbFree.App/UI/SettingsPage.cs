@@ -305,7 +305,7 @@ internal sealed class SettingsPage : UserControl
             Switch(
                 "Help improve ThumbFree",
                 "Keep each dictation's recording and text on this PC so you can choose to send them to the ThumbFree team. " +
-                "Never from password fields or private browser windows. Nothing is sent automatically: you save a zip and share it yourself.",
+                "Never from password fields or web browsers (a browser can't say whether a window is private). Nothing is sent automatically: you save a zip and share it yourself.",
                 s => s.SaveSamples,
                 (s, v) => s.SaveSamples = v),
             _samplesNote,

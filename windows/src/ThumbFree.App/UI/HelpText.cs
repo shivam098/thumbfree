@@ -60,7 +60,7 @@ internal static class HelpText
             "Speech is turned into text on this PC. Nothing you say is uploaded, and there's no account.",
             "The internet is used only to download a speech model, once.",
             "The microphone is on only from one tap of Ctrl+Win to the next.",
-            "Recordings are kept only if you turn on “Help improve ThumbFree”. They stay on this PC, and leave it only in a zip you save and share yourself.",
+            "Recordings are kept only if you turn on “Help improve ThumbFree”, and never from password fields or web browsers. They stay on this PC, and leave it only in a zip you save and share yourself.",
             "Logs hold timings and error names, never your words.",
         ]),
         new("Licences and thanks", [

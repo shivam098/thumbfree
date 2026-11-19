@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json.Nodes;
+using ThumbFree.App.Platform;
 using ThumbFree.Core;
 
 namespace ThumbFree.App.Tests;
@@ -137,7 +138,7 @@ public sealed class SampleStoreTests : IDisposable
         var store = NewStore();
         var audio = Enumerable.Range(0, 16000).Select(i => MathF.Sin(i / 10f) * 0.5f).ToArray();
 
-        Assert.True(store.Save(audio, "hey tim would love to connect", "Hey Tim, would love to connect.", ModelCatalog.EnglishLive, passwordField: false, "Inbox - Outlook"));
+        Assert.True(store.Save(audio, "hey tim would love to connect", "Hey Tim, would love to connect.", ModelCatalog.EnglishLive, passwordField: false, "OUTLOOK"));
         store.Flush(TimeSpan.FromSeconds(5));
 
         var sample = Assert.Single(Directory.GetDirectories(store.Folder));
@@ -150,10 +151,14 @@ public sealed class SampleStoreTests : IDisposable
         Assert.Equal(16, BitConverter.ToInt16(wav, 34));
         Assert.Equal(audio, ThumbFree.Speech.WavFile.ReadPcm16Mono16k(Path.Combine(sample, "audio.wav")), new Close());
 
-        var note = JsonNode.Parse(File.ReadAllText(Path.Combine(sample, "meta.json")))!;
+        var note = JsonNode.Parse(File.ReadAllText(Path.Combine(sample, "meta.json")))!.AsObject();
+        Assert.Equal(
+            new[] { "app", "app_version", "language", "model", "platform", "seconds", "time", "transcript", "typed" },
+            note.Select(p => p.Key).Order(StringComparer.Ordinal));
         Assert.Equal("en-kroko-live", note["model"]!.GetValue<string>());
         Assert.Equal("hey tim would love to connect", note["transcript"]!.GetValue<string>());
         Assert.Equal("Hey Tim, would love to connect.", note["typed"]!.GetValue<string>());
+        Assert.Equal("OUTLOOK", note["app"]!.GetValue<string>());
         Assert.Equal("0.8.0", note["app_version"]!.GetValue<string>());
         Assert.Equal(1.0, note["seconds"]!.GetValue<double>());
         Assert.StartsWith("2026-11-19T18:00:00", note["time"]!.GetValue<string>(), StringComparison.Ordinal);
@@ -161,34 +166,69 @@ public sealed class SampleStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, false, "Inbox - Outlook")]
-    [InlineData(true, true, "Inbox - Outlook")]
-    [InlineData(true, false, "New Incognito Tab - Google Chrome (Incognito)")]
-    [InlineData(true, false, "Bank - Personal - Microsoft​ Edge [InPrivate]")]
-    [InlineData(true, false, "Mozilla Firefox Private Browsing")]
-    public void Keeps_nothing_when_off_from_password_fields_or_private_windows(bool enabled, bool passwordField, string title)
+    [InlineData(false, false, "OUTLOOK")]
+    [InlineData(true, true, "OUTLOOK")]
+    [InlineData(true, true, null)]
+    [InlineData(true, false, "chrome")]
+    [InlineData(true, false, "msedge")]
+    [InlineData(true, false, "brave")]
+    public void Keeps_nothing_when_off_from_password_fields_or_any_browser(bool enabled, bool passwordField, string? app)
     {
         _enabled = enabled;
         var store = NewStore();
 
-        Assert.False(store.Save([0.1f, 0.2f], "secret", "secret", ModelCatalog.EnglishFast, passwordField, title));
+        Assert.False(store.Save([0.1f, 0.2f], "secret", "secret", ModelCatalog.EnglishFast, passwordField, app));
         store.Flush(TimeSpan.FromSeconds(5));
 
         Assert.Equal(0, store.Summary().Count);
     }
 
     [Theory]
-    [InlineData("New InPrivate tab - Microsoft​ Edge", true)]
-    [InlineData("New Tab - Google Chrome (Incognito)", true)]
-    [InlineData("Example Domain — Mozilla Firefox Private Browsing", true)]
-    [InlineData("Private browsing - Opera", true)]
-    [InlineData("New Private Tab - Brave (Private)", true)]
-    [InlineData("Private Window - Vivaldi", true)]
-    [InlineData("Inbox (3) - Gmail - Google Chrome", false)]
-    [InlineData("Quarterly plan.docx - Word", false)]
-    [InlineData("", false)]
-    [InlineData(null, false)]
-    public void Recognises_private_browser_windows(string? title, bool isPrivate) => Assert.Equal(isPrivate, PrivateWindows.IsPrivate(title));
+    [InlineData(null, false, true)]
+    [InlineData("WINWORD", false, true)]
+    [InlineData("slack", false, true)]
+    [InlineData("WINWORD", true, false)]
+    [InlineData(null, true, false)]
+    [InlineData("chrome", false, false)]
+    [InlineData("firefox", false, false)]
+    public void Samples_come_only_from_desktop_apps_and_ThumbFree_s_own_boxes(string? app, bool passwordField, bool mayKeep) =>
+        Assert.Equal(mayKeep, SampleStore.MayKeep(app, passwordField));
+
+    [Theory]
+    [InlineData("chrome")]
+    [InlineData("msedge")]
+    [InlineData("firefox")]
+    [InlineData("brave")]
+    [InlineData("opera")]
+    [InlineData("vivaldi")]
+    [InlineData("arc")]
+    [InlineData("zen")]
+    [InlineData("librewolf")]
+    [InlineData("waterfox")]
+    [InlineData("chromium")]
+    [InlineData("thorium")]
+    [InlineData("browser")]
+    [InlineData("floorp")]
+    [InlineData("iexplore")]
+    [InlineData("comet")]
+    [InlineData("DuckDuckGo")]
+    [InlineData("whale")]
+    [InlineData("AvastBrowser")]
+    [InlineData("mullvadbrowser")]
+    [InlineData("palemoon")]
+    [InlineData("CHROME")]
+    [InlineData("Firefox.exe")]
+    public void Knows_browsers_by_process_name(string processName) => Assert.True(Browsers.IsBrowser(processName));
+
+    [Theory]
+    [InlineData("OUTLOOK")]
+    [InlineData("WINWORD")]
+    [InlineData("ms-teams")]
+    [InlineData("msedgewebview2")]
+    [InlineData("chrome_proxy")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void Other_apps_are_not_browsers(string? processName) => Assert.False(Browsers.IsBrowser(processName));
 
     [Fact]
     public void Keeps_only_the_newest_samples()

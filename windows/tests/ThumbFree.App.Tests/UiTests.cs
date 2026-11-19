@@ -182,6 +182,7 @@ public sealed class UiTests : IDisposable
         Assert.Contains("661 MB", texts);
         Assert.Contains(texts, t => t.StartsWith("1 dictation kept on this PC (33 KB", StringComparison.Ordinal));
         Assert.Contains("2 of 40", texts);
+        Assert.Contains(texts, t => t.Contains("Never from password fields or web browsers (a browser can't say whether a window is private).", StringComparison.Ordinal));
 
         Render.Click(Render.Named<CheckBox>(view.Settings, "Smart formatting"));
         Assert.False(services.Current.SmartFormatting);
@@ -321,6 +322,7 @@ public sealed class UiTests : IDisposable
         Render.Click(Render.ButtonWith(guide, "Help improve ThumbFree"));
         Render.Save(guide, "guide-9-data", GuideWidth, GuideHeight);
         Assert.True(services.Current.SaveSamples);
+        Assert.Contains(Render.Texts(guide), t => t.Contains("Never from password fields or web browsers (a browser can't say whether a window is private).", StringComparison.Ordinal));
         Render.Click(Render.ButtonWith(guide, "Finish"));
         Assert.True(finished);
         Assert.True(services.Current.GuideDone);
