@@ -5,6 +5,7 @@
     <Project Path="src/ThumbFree.Speech/ThumbFree.Speech.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ThumbFree.App.Tests/ThumbFree.App.Tests.csproj" />
     <Project Path="tests/ThumbFree.Core.Tests/ThumbFree.Core.Tests.csproj" />
     <Project Path="tests/ThumbFree.Speech.Tests/ThumbFree.Speech.Tests.csproj" />
   </Folder>

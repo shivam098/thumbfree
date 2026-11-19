@@ -43,7 +43,11 @@ public partial class App : System.Windows.Application
 
         if (!_ownsMutex)
         {
-            System.Windows.MessageBox.Show("ThumbFree is already running — look for its icon in the system tray.", "ThumbFree");
+            if (!e.Args.Contains(WindowsEnvironment.BackgroundArgument) && !ShowRunningCopy())
+            {
+                System.Windows.MessageBox.Show("ThumbFree is already running — look for its icon in the system tray.", "ThumbFree");
+            }
+
             Shutdown();
             return;
         }
@@ -53,11 +57,14 @@ public partial class App : System.Windows.Application
         DispatcherUnhandledException += OnUnhandledException;
 
         var settings = AppSettings.LoadOrCreate();
+        _services = CreateServices(settings);
         _overlay = new OverlayWindow();
         _overlay.Pinned = File.Exists(AppPaths.OverlayPinnedFlag);
 
         _host = new DictationHost(settings, Dispatcher);
-        _tray = new TrayIcon(_host, settings, _overlay, SetPaused, () => Shutdown());
+        _tray = new TrayIcon(_services, _overlay, new TrayCommands(OpenPage, _host.PasteLastTranscript, Quit));
+        _services.Notifier = new Notifier(_tray, _services.State, _services.Environment.CopyText);
+        WireUi(_host, _services);
         _overlay.PinnedChanged += pinned => StateFlags.Set(AppPaths.OverlayPinnedFlag, pinned);
         _host.Status += _overlay.ShowStatus;
         _host.Activity += _overlay.ShowActivity;
@@ -87,11 +94,13 @@ public partial class App : System.Windows.Application
         WarnIfAnotherDictationAppRuns();
 
         _host.Start();
+        OpenAtStart(e.Args);
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         Log.Info("exiting");
+        CloseUi();
         _keyHook?.Dispose();
         _pasteHotkey?.Dispose();
         _languageHotkey?.Dispose();
@@ -122,6 +131,7 @@ public partial class App : System.Windows.Application
         StateFlags.Set(AppPaths.PausedFlag, paused);
         _tray?.SetPaused(paused);
         _overlay?.SetPaused(paused);
+        _services?.State.SetPaused(paused);
         Log.Info(paused ? "dictation keys paused" : "dictation keys on");
     }
 
@@ -225,6 +235,12 @@ public partial class App : System.Windows.Application
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         Log.Error($"unhandled UI exception: {e.Exception.GetType().Name} 0x{e.Exception.HResult:X8}");
+        if (FailedBeforeTray(e.Exception))
+        {
+            e.Handled = true;
+            return;
+        }
+
         _tray?.ShowBalloon("Something went wrong: " + e.Exception.Message);
         e.Handled = true;
     }
