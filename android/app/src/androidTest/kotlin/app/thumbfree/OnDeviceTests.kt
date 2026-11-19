@@ -214,9 +214,12 @@ class StreamingOnDeviceTest {
             assertTrue(fixed, fixed.contains("GitHub Copilot"))
             assertTrue(fixed, fixed.contains("pull request", ignoreCase = true))
             assertTrue("punctuated: $text", text.any { c -> c == '.' || c == ',' || c == '?' })
+            val doubled = Regex("[.,?!;:]{2}")
+            assertFalse("no doubled marks: $text", doubled.containsMatchIn(text))
 
             val logs = timed("kroko whole recording", wav("send-logs.wav")) { it.transcribe(wav("send-logs.wav"), preview = false) }!!
             assertTrue("ends like a sentence: $logs", logs.endsWith("."))
+            assertFalse("no doubled marks: $logs", doubled.containsMatchIn(logs))
             assertTrue(logs, logs.contains("send me the latest build logs", ignoreCase = true))
 
             it.abort()
