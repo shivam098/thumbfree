@@ -207,7 +207,8 @@ internal sealed class SampleStore
     /// <summary>yyyyMMdd-HHmmss-fff, so names sort oldest first (as on Android).</summary>
     private string NewSampleFolder(DateTimeOffset time)
     {
-        var name = time.LocalDateTime.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
+        // The clock's own time (local in the app), so the name doesn't depend on the machine's time zone.
+        var name = time.DateTime.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         var path = Path.Combine(Folder, name);
         for (var i = 2; Directory.Exists(path); i++)
         {
