@@ -228,4 +228,26 @@ class StreamingOnDeviceTest {
             assertEquals("", it.transcribe(FloatArray(16_000), preview = false))
         }
     }
+
+    /**
+     * Kroko writes a few marks itself; given those, the punctuation model added its own after them ("genres.. So I
+     * wanted"). The three clips without a pause make one long phrase with Kroko's marks inside it.
+     */
+    @Test
+    fun never_doubles_punctuation() {
+        assumeTrue("no model at $dir", File(dir, "encoder.onnx").canRead())
+        StreamingRecognizer.load(dir, threads).use { model ->
+            val audio = wav("send-logs.wav") + wav("genres.wav") + wav("dictation.wav")
+            val session = model.session()
+            var i = 0
+            while (i < audio.size) {
+                val end = minOf(audio.size, i + 1_600)
+                session.accept(audio.copyOfRange(i, end))
+                i = end
+            }
+            val text = session.finish()
+            println("ThumbFree kroko joined: $text")
+            assertFalse("no doubled marks: $text", Regex("[.,?!;:]{2}").containsMatchIn(text))
+        }
+    }
 }
