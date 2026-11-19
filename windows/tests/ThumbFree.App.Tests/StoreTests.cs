@@ -172,6 +172,7 @@ public sealed class SampleStoreTests : IDisposable
     [InlineData(true, false, "chrome")]
     [InlineData(true, false, "msedge")]
     [InlineData(true, false, "brave")]
+    [InlineData(true, false, "")]
     public void Keeps_nothing_when_off_from_password_fields_or_any_browser(bool enabled, bool passwordField, string? app)
     {
         _enabled = enabled;
@@ -191,6 +192,9 @@ public sealed class SampleStoreTests : IDisposable
     [InlineData(null, true, false)]
     [InlineData("chrome", false, false)]
     [InlineData("firefox", false, false)]
+    [InlineData("", false, false)]
+    [InlineData("  ", false, false)]
+    [InlineData(TestSetup.RegisteredBrowser, false, false)]
     public void Samples_come_only_from_desktop_apps_and_ThumbFree_s_own_boxes(string? app, bool passwordField, bool mayKeep) =>
         Assert.Equal(mayKeep, SampleStore.MayKeep(app, passwordField));
 
@@ -214,10 +218,20 @@ public sealed class SampleStoreTests : IDisposable
     [InlineData("DuckDuckGo")]
     [InlineData("whale")]
     [InlineData("AvastBrowser")]
+    [InlineData("AVGBrowser")]
+    [InlineData("CCleanerBrowser")]
+    [InlineData("360se")]
+    [InlineData("360chrome")]
+    [InlineData("QQBrowser")]
+    [InlineData("Maxthon")]
+    [InlineData("UCBrowser")]
+    [InlineData("seamonkey")]
     [InlineData("mullvadbrowser")]
     [InlineData("palemoon")]
     [InlineData("CHROME")]
     [InlineData("Firefox.exe")]
+    [InlineData(TestSetup.RegisteredBrowser)]
+    [InlineData("examplebrowser.EXE")]
     public void Knows_browsers_by_process_name(string processName) => Assert.True(Browsers.IsBrowser(processName));
 
     [Theory]
@@ -226,6 +240,7 @@ public sealed class SampleStoreTests : IDisposable
     [InlineData("ms-teams")]
     [InlineData("msedgewebview2")]
     [InlineData("chrome_proxy")]
+    [InlineData("  ")]
     [InlineData("")]
     [InlineData(null)]
     public void Other_apps_are_not_browsers(string? processName) => Assert.False(Browsers.IsBrowser(processName));
@@ -296,6 +311,72 @@ public sealed class SampleStoreTests : IDisposable
         public bool Equals(float x, float y) => Math.Abs(x - y) < 1e-4;
 
         public int GetHashCode(float obj) => 0;
+    }
+}
+
+public sealed class BrowserTests
+{
+    [Theory]
+    [InlineData("\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\"", "chrome")]
+    [InlineData("C:\\Program Files\\Internet Explorer\\iexplore.exe", "iexplore")]
+    [InlineData("\"C:\\Users\\Ren\\AppData\\Local\\Programs\\Opera\\opera.exe\" --single-argument %1", "opera")]
+    [InlineData("C:\\Program Files\\Zen Browser\\zen.exe -osint -url \"%1\"", "zen")]
+    [InlineData("C:\\Tools\\my.exe.d\\Some Browser.EXE", "Some Browser")]
+    [InlineData("msedge.exe", "msedge")]
+    [InlineData("\"C:\\Program Files\\Some Browser\\start.cmd\"", null)]
+    [InlineData("C:\\Program Files\\Some Browser", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Reads_the_program_from_a_registered_command(string? command, string? expected) =>
+        Assert.Equal(expected, Browsers.ProgramName(command));
+
+    [Fact]
+    public void Registered_browsers_are_read_once_in_the_background_and_kept()
+    {
+        var reads = 0;
+        var list = new BrowserList(() =>
+        {
+            Interlocked.Increment(ref reads);
+            return ["SomeBrowser", " Other Browser "];
+        });
+
+        list.Prepare();
+        Assert.True(list.IsBrowser("SomeBrowser"));
+        Assert.True(list.IsBrowser("someBROWSER.exe"));
+        Assert.True(list.IsBrowser("Other Browser"));
+        Assert.False(list.IsBrowser("WINWORD"));
+        Assert.True(list.IsBrowser("chrome"));
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
+    public void A_registry_that_fails_never_throws_and_the_known_browsers_still_count()
+    {
+        var list = new BrowserList(() => throw new UnauthorizedAccessException("Access to the registry key is denied."));
+
+        Assert.False(list.IsBrowser("SomeBrowser"));
+        Assert.True(list.IsBrowser("chrome"));
+    }
+
+    [Fact]
+    public async Task A_slow_registry_never_holds_a_dictation_up()
+    {
+        using var release = new ManualResetEventSlim();
+        var list = new BrowserList(
+            () =>
+            {
+                release.Wait();
+                return ["SomeBrowser"];
+            },
+            wait: TimeSpan.FromMilliseconds(50));
+
+        var check = Task.Run(() => list.IsBrowser("SomeBrowser"));
+        Assert.Same(check, await Task.WhenAny(check, Task.Delay(TimeSpan.FromSeconds(5))));
+        Assert.False(await check);
+        Assert.True(list.IsBrowser("firefox"));
+
+        release.Set();
+        Assert.True(SpinWait.SpinUntil(() => list.IsBrowser("SomeBrowser"), TimeSpan.FromSeconds(5)));
     }
 }
 
