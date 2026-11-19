@@ -347,7 +347,7 @@ internal sealed class SettingsPage : UserControl
     private UIElement[] AdvancedSection()
     {
         var buttons = new WrapPanel();
-        buttons.Children.Add(Theme.Button("Open settings file", (_, _) => OpenSettingsFile()));
+        buttons.Children.Add(Theme.Button("Open settings file", (_, _) => OpenSettingsFile(_services)));
         buttons.Children.Add(Theme.Button("Open logs folder", (_, _) =>
         {
             Directory.CreateDirectory(AppPaths.LogsDir);
@@ -556,15 +556,11 @@ internal sealed class SettingsPage : UserControl
         RefreshSamples();
     }
 
-    private void OpenSettingsFile()
+    /// <summary>Opens settings.json in Notepad (from Settings › Advanced and from the problem note on Home).</summary>
+    internal static void OpenSettingsFile(AppServices services)
     {
-        var path = _services.Settings.FilePath;
-        if (!File.Exists(path))
-        {
-            Current.Save(path);
-        }
-
-        _services.Environment.Open("notepad.exe", $"\"{path}\"");
+        services.Settings.CreateIfMissing();
+        services.Environment.Open("notepad.exe", $"\"{services.Settings.FilePath}\"");
     }
 
     /// <summary>One speech model: choose it, see its size and state, and download, cancel or delete it.</summary>

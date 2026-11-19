@@ -98,12 +98,26 @@ public partial class App
         }
     }
 
+    /// <summary>
+    /// A failure before the tray icon exists shows an error and exits (which releases the single-instance mutex) rather
+    /// than leaving a hidden copy running.
+    /// </summary>
+    private bool FailedBeforeTray(Exception ex) => new StartupGuard(
+        message => System.Windows.MessageBox.Show(message, "ThumbFree", MessageBoxButton.OK, MessageBoxImage.Error),
+        () => Shutdown(1)).Handle(ex, trayExists: _tray is not null);
+
     /// <summary>First run opens the guide; any other launch by the person opens the window (sign-in starts quietly in the tray).</summary>
     private void OpenAtStart(string[] args)
     {
         if (_services is null)
         {
             return;
+        }
+
+        if (_services.Settings.ProblemSummary is { } problem)
+        {
+            // Clicking it opens Settings, which says what to fix.
+            _tray?.Show("ThumbFree", problem, warning: true, AppPage.Settings);
         }
 
         if (!_services.Current.GuideDone)

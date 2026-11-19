@@ -235,6 +235,12 @@ public partial class App : System.Windows.Application
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         Log.Error($"unhandled UI exception: {e.Exception.GetType().Name} 0x{e.Exception.HResult:X8}");
+        if (FailedBeforeTray(e.Exception))
+        {
+            e.Handled = true;
+            return;
+        }
+
         _tray?.ShowBalloon("Something went wrong: " + e.Exception.Message);
         e.Handled = true;
     }

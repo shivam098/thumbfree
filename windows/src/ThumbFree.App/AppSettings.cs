@@ -1,7 +1,7 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using ThumbFree.Core;
 
@@ -97,12 +97,6 @@ internal static class StateFlags
 /// </summary>
 internal sealed class AppSettings
 {
-    internal static readonly JsonDocumentOptions DocumentOptions = new()
-    {
-        CommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-    };
-
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -113,8 +107,20 @@ internal sealed class AppSettings
 
         // People read and edit this file: "Alt+Shift+H" rather than "Alt\u002BShift\u002BH".
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        Converters = { new LenientEnumConverter<Language>(), new LenientEnumConverter<Tier>() },
+        Converters = { new NamedEnumConverter<Language>(), new NamedEnumConverter<Tier>() },
     };
+
+    /// <summary>The same as <see cref="JsonOptions"/>, on one line.</summary>
+    internal static readonly JsonSerializerOptions CompactOptions = new(JsonOptions) { WriteIndented = false };
+
+    /// <summary>Every setting the file can hold: its JSON key (camelCase) and its property.</summary>
+    internal static IReadOnlyList<(string Key, PropertyInfo Property)> Fields { get; } = typeof(AppSettings)
+        .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+        .Where(p => p is { CanRead: true, CanWrite: true } && p.GetCustomAttribute<JsonIgnoreAttribute>() is null)
+        .Select(p => (JsonNamingPolicy.CamelCase.ConvertName(p.Name), p))
+        .ToList();
+
+    private readonly Dictionary<string, string> _problems = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Settings read only when ThumbFree starts: a change to them (by hand in the file) needs a restart. Everything the
@@ -254,9 +260,11 @@ internal sealed class AppSettings
     public static AppSettings LoadOrCreate() => Load(AppPaths.SettingsFile, AppPaths.VoiceDictationSettingsFile, AppPaths.DataDir);
 
     /// <summary>
-    /// Reads <paramref name="path"/>, first copying Voice Dictation's settings there if it doesn't exist yet. Fields
-    /// this version doesn't know are ignored (and kept in the file), missing ones take their defaults, and a file that
-    /// can't be read gives the defaults without being overwritten. Only a new file is written.
+    /// Reads <paramref name="path"/>, first copying Voice Dictation's settings there if it doesn't exist yet. Never
+    /// throws. Fields this version doesn't know are ignored (and kept in the file), missing ones take their defaults, a
+    /// key written twice takes its last value, and a value of the wrong kind keeps that one setting's default (see
+    /// <see cref="LoadProblems"/>). A file with a mistake gives the defaults and is never overwritten. Only a new (or
+    /// empty) file is written.
     /// </summary>
     /// <param name="dataDir">Where the older on/off flag files are (they become <see cref="Language"/> and <see cref="HinglishTier"/>).</param>
     internal static AppSettings Load(string path, string? voiceDictationPath = null, string? dataDir = null)
@@ -270,36 +278,33 @@ internal sealed class AppSettings
                 Log.Info("settings copied from Voice Dictation");
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
             Log.Warn($"couldn't copy Voice Dictation's settings: {ex.GetType().Name}");
         }
 
         try
         {
-            if (File.Exists(path))
+            if (File.Exists(path) && File.ReadAllBytes(path) is var file && !SettingsJson.IsBlank(file))
             {
-                var file = JsonNode.Parse(File.ReadAllText(path), null, DocumentOptions) as JsonObject
-                    ?? throw new JsonException("settings.json isn't a JSON object");
-                var loaded = file.Deserialize<AppSettings>(JsonOptions) ?? new AppSettings();
-                loaded.Normalize();
-                loaded.Migrate(file, dataDir);
-                return loaded;
+                return FromFile(file, dataDir);
             }
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
             Log.Warn($"settings unreadable, using defaults: {ex.GetType().Name}");
-            return new AppSettings();
+            var unreadable = new AppSettings();
+            unreadable._problems[string.Empty] = $"ThumbFree couldn't read settings.json ({ex.Message}), so it's using its default settings and won't change the file until it restarts.";
+            return unreadable;
         }
 
         var settings = new AppSettings();
-        settings.Migrate(new JsonObject(), dataDir);
+        settings.Migrate(new Dictionary<string, JsonElement>(), dataDir);
         try
         {
             settings.Save(path);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
             Log.Warn($"couldn't write default settings: {ex.GetType().Name}");
         }
@@ -310,29 +315,137 @@ internal sealed class AppSettings
     /// <summary>Writes every setting to a new file. Changes to an existing file go through <see cref="SettingsStore"/>, which keeps the rest of it.</summary>
     public void Save() => Save(AppPaths.SettingsFile);
 
-    internal void Save(string path) => SettingsStore.WriteAtomically(path, JsonSerializer.SerializeToNode(this, JsonOptions)!.AsObject());
+    internal void Save(string path) => SettingsStore.WriteAtomically(path, JsonSerializer.SerializeToUtf8Bytes(this, JsonOptions));
 
-    /// <summary>Repairs what a hand-edited or older file can leave behind: nulls, case-sensitive dictionaries, a live Hindi tier.</summary>
+    /// <summary>
+    /// What was wrong in the file when it was read: a message per JSON key whose value couldn't be used (that setting
+    /// kept its default), or under "" when the whole file couldn't be read.
+    /// </summary>
+    internal IReadOnlyDictionary<string, string> LoadProblems => _problems;
+
+    /// <summary>"In settings.json, “threads” should be a whole number…": the message for a value of the wrong kind.</summary>
+    internal static string WrongValue(string key, string expected) =>
+        $"In settings.json, “{key}” should be {expected}, so ThumbFree uses its default for it.";
+
+    /// <summary>"settings.json has a mistake near line 3…" for a file that can't be parsed.</summary>
+    internal static string Mistake(JsonException ex) => ex.LineNumber is { } line
+        ? $"settings.json has a mistake near line {line + 1}, so ThumbFree is using its default settings and won't change the file. Fix it (Settings › Advanced › Open settings file) and restart ThumbFree, or delete it to start again."
+        : $"{ex.Message} ThumbFree is using its default settings and won't change the file. Fix it (Settings › Advanced › Open settings file) and restart ThumbFree, or delete it to start again.";
+
+    /// <summary>Each known key on its own: one value of the wrong kind costs only that setting, never the rest.</summary>
+    private static AppSettings FromFile(byte[] file, string? dataDir)
+    {
+        var settings = new AppSettings();
+        Dictionary<string, JsonElement> values;
+        try
+        {
+            values = SettingsJson.Values(file);
+        }
+        catch (JsonException ex)
+        {
+            Log.Warn("settings.json has a syntax error, using defaults");
+            settings._problems[string.Empty] = Mistake(ex);
+            return settings;
+        }
+
+        foreach (var (key, property) in Fields)
+        {
+            if (values.TryGetValue(key, out var value))
+            {
+                settings.Read(key, property, value);
+            }
+        }
+
+        settings.Normalize();
+        settings.Migrate(values, dataDir);
+        return settings;
+    }
+
+    private void Read(string key, PropertyInfo property, JsonElement value)
+    {
+        if (property.PropertyType == typeof(Dictionary<string, string>))
+        {
+            if (value.ValueKind != JsonValueKind.Object)
+            {
+                _problems[key] = WrongValue(key, "a { } list of “what”: “text” pairs");
+                return;
+            }
+
+            // Keys are matched ignoring case, so "Git Hub" and "git hub" are one entry: the last one wins.
+            var entries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in value.EnumerateObject())
+            {
+                if (entry.Value.ValueKind == JsonValueKind.String)
+                {
+                    entries[entry.Name] = entry.Value.GetString()!;
+                }
+                else
+                {
+                    _problems[key] = $"In settings.json, “{key}” should have text in quotes for “{entry.Name}”, so that entry is left out.";
+                }
+            }
+
+            property.SetValue(this, entries);
+            return;
+        }
+
+        try
+        {
+            var read = value.Deserialize(property.PropertyType, JsonOptions);
+            if (read is null && new NullabilityInfoContext().Create(property).WriteState != NullabilityState.Nullable)
+            {
+                throw new JsonException("null");
+            }
+
+            property.SetValue(this, read);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException or ArgumentException or FormatException or OverflowException)
+        {
+            _problems[key] = WrongValue(key, Expected(property.PropertyType));
+        }
+    }
+
+    private static string Expected(Type type) =>
+        type == typeof(bool) ? "true or false"
+        : type == typeof(int) ? "a whole number"
+        : type == typeof(string) ? "text in quotes"
+        : type.IsEnum ? string.Join(", ", Enum.GetNames(type)[..^1]) + " or " + Enum.GetNames(type)[^1]
+        : "a different kind of value";
+
+    /// <summary>Repairs what a hand-edited or older file can leave behind: dictionaries that ignore case, a live Hindi tier.</summary>
     private void Normalize()
     {
-        Replacements = new(Replacements ?? [], StringComparer.OrdinalIgnoreCase);
-        Snippets = new(Snippets ?? [], StringComparer.OrdinalIgnoreCase);
-        NewLineKeys = new(NewLineKeys ?? [], StringComparer.OrdinalIgnoreCase);
+        Replacements = Merged(Replacements);
+        Snippets = Merged(Snippets);
+        NewLineKeys = Merged(NewLineKeys);
         Vocabulary ??= string.Empty;
-        DictationLanguageHotkey ??= "Alt+Shift+H";
-        PasteLastHotkey ??= "Alt+Shift+Z";
         if (HinglishTier == Tier.Live)
         {
             HinglishTier = Tier.Standard;
         }
     }
 
-    /// <summary>Carries older choices over when the file doesn't have the newer field yet.</summary>
-    private void Migrate(JsonObject file, string? dataDir)
+    /// <summary>The entries with keys that ignore case; of two that differ only in case, the last one wins.</summary>
+    private static Dictionary<string, string> Merged(Dictionary<string, string>? source)
     {
-        if (!file.ContainsKey("liveTyping") && file["livePreview"] is JsonValue preview && preview.TryGetValue(out bool live))
+        var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in source ?? [])
         {
-            LiveTyping = live;
+            if (key is not null && value is not null)
+            {
+                merged[key] = value;
+            }
+        }
+
+        return merged;
+    }
+
+    /// <summary>Carries older choices over when the file doesn't have the newer field yet.</summary>
+    private void Migrate(IReadOnlyDictionary<string, JsonElement> file, string? dataDir)
+    {
+        if (!file.ContainsKey("liveTyping") && file.TryGetValue("livePreview", out var preview) && preview.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            LiveTyping = preview.GetBoolean();
         }
 
         if (dataDir is null)
@@ -351,24 +464,19 @@ internal sealed class AppSettings
         }
     }
 
-    /// <summary>Reads enum names in any case and turns unknown values into the default, so one typo can't reset every setting.</summary>
-    private sealed class LenientEnumConverter<T> : JsonConverter<T>
+    /// <summary>Reads an enum's name in any case; anything else is a mistake reported for that one setting.</summary>
+    private sealed class NamedEnumConverter<T> : JsonConverter<T>
         where T : struct, Enum
     {
         public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            if (reader.TokenType == JsonTokenType.String && Enum.TryParse<T>(reader.GetString(), ignoreCase: true, out var named) && Enum.IsDefined(named))
+            if (reader.TokenType == JsonTokenType.String && reader.GetString() is { } name && !name.Any(char.IsDigit) &&
+                Enum.TryParse<T>(name, ignoreCase: true, out var value) && Enum.IsDefined(value))
             {
-                return named;
+                return value;
             }
 
-            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number) && Enum.IsDefined(typeof(T), number))
-            {
-                return (T)Enum.ToObject(typeof(T), number);
-            }
-
-            reader.Skip();
-            return default;
+            throw new JsonException($"Not one of {string.Join(", ", Enum.GetNames<T>())}.");
         }
 
         public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());

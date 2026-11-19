@@ -25,6 +25,8 @@ internal sealed class HomePage : UserControl
     private readonly TextBlock _lastCaption = Theme.Label(string.Empty, 12, Theme.Muted);
     private readonly Button _copy;
     private readonly Button _allHistory;
+    private readonly Border _settingsProblem;
+    private readonly TextBlock _settingsProblemText = Theme.Label(string.Empty, 13, Theme.Danger);
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly DispatcherTimer _copied = new() { Interval = TimeSpan.FromSeconds(2) };
     private Action? _onAction;
@@ -38,6 +40,22 @@ internal sealed class HomePage : UserControl
         var tagline = Theme.Label("Type with your voice, not your thumbs. 100% offline.", 14, Theme.Muted);
         tagline.Margin = new Thickness(0, 0, 0, 20);
         stack.Children.Add(tagline);
+
+        // Something in settings.json couldn't be used, or a change couldn't be saved.
+        var problemHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        var openFile = Theme.Link("Open settings file", (_, _) =>
+        {
+            SettingsPage.OpenSettingsFile(_services);
+            RefreshStatus();
+        });
+        DockPanel.SetDock(openFile, Dock.Right);
+        problemHeader.Children.Add(openFile);
+        problemHeader.Children.Add(Theme.Title("Your settings need a look"));
+        var problem = new StackPanel();
+        problem.Children.Add(problemHeader);
+        problem.Children.Add(_settingsProblemText);
+        _settingsProblem = Theme.CardOf(problem, Theme.Hex("#FDF3F2"));
+        stack.Children.Add(_settingsProblem);
 
         // Can I dictate now?
         _action = Theme.Button(string.Empty, (_, _) => _onAction?.Invoke(), primary: true);
@@ -137,6 +155,7 @@ internal sealed class HomePage : UserControl
         {
             if (e.NewValue is true)
             {
+                RefreshStatus();
                 RefreshLast();
                 _clock.Start();
             }
@@ -228,6 +247,10 @@ internal sealed class HomePage : UserControl
         _warning.Text = string.Join("\n", warnings);
         _warning.Foreground = state.MicrophoneSilent || state.Problem?.Kind == StatusKind.Error ? Theme.Danger : Theme.Warning;
         _warning.Visibility = warnings.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        var settingsProblem = _services.Settings.LastError;
+        _settingsProblemText.Text = settingsProblem ?? string.Empty;
+        _settingsProblem.Visibility = settingsProblem is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void RefreshLanguage()

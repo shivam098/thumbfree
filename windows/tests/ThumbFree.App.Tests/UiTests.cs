@@ -135,6 +135,28 @@ public sealed class UiTests : IDisposable
     });
 
     [Fact]
+    public void Home_and_Settings_say_what_is_wrong_in_settings_json() => UiThread.Run(() =>
+    {
+        _models.Installed.Add(ModelCatalog.EnglishLive.Id);
+        var path = _folder.File("settings.json");
+        File.WriteAllText(path, """{ "threads": "four", "keepHistory": false }""");
+        var services = Services(AppSettings.Load(path));
+        var view = new MainView(services);
+        const string problem = "In settings.json, “threads” should be a whole number, so ThumbFree uses its default for it. Fix it in the file, then restart ThumbFree.";
+
+        Render.Save(view, "window-home-settings-problem", WindowWidth, WindowHeight);
+        Assert.Contains("Your settings need a look", Render.Texts(view));
+        Assert.Contains(problem, Render.Texts(view));
+        Assert.False(services.Current.KeepHistory);
+        Render.Click(Render.ButtonWith(view, "Open settings file"));
+        Assert.Equal("notepad.exe", _environment.Opened.Single());
+
+        view.ShowPage(AppPage.Settings);
+        Render.Draw(view, WindowWidth, WindowHeight);
+        Assert.Contains(problem, Render.Texts(view.Settings));
+    });
+
+    [Fact]
     public void Settings_show_every_section_and_save_each_change() => UiThread.Run(() =>
     {
         _models.Installed.Add(ModelCatalog.EnglishLive.Id);
@@ -383,7 +405,8 @@ public sealed class UiTests : IDisposable
     private AppServices Services(AppSettings? settings = null) =>
         TestServices.Create(_folder, _environment, _models, settings, () => _now);
 
-    private JsonObject ReadSettings() => JsonNode.Parse(File.ReadAllText(_folder.File("settings.json")))!.AsObject();
+    private JsonObject ReadSettings() =>
+        JsonNode.Parse(File.ReadAllText(_folder.File("settings.json")), documentOptions: new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true })!.AsObject();
 
     /// <summary>Six dictations, newest first: notes, an email, Hinglish, a list, a question and a long one.</summary>
     private void Seed(AppServices services)

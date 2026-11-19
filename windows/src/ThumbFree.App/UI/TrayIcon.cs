@@ -47,7 +47,15 @@ internal sealed class TrayIcon : IDisposable, INotificationSurface
                 commands.Open(AppPage.Home);
             }
         };
-        _icon.BalloonTipClicked += (_, _) => Clicked?.Invoke(_balloonTag);
+        _icon.BalloonTipClicked += (_, _) =>
+        {
+            if (_balloonTag is AppPage page)
+            {
+                commands.Open(page);
+            }
+
+            Clicked?.Invoke(_balloonTag);
+        };
         services.State.Changed += Refresh;
         services.Models.Changed += _ => Refresh();
         services.Settings.Changed += _ => Refresh();
